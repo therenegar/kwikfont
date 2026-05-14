@@ -3,13 +3,13 @@ requires = ["setuptools>=69", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "enbox-font-manager"
+name = "Kwik Font"
 version = "0.1.0"
 description = "A GTK font browser, viewer, installer, and font catalog generator for Linux."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-authors = [{ name = "enBox" }]
+authors = [{ name = "Ben Renegar" }]
 keywords = ["gtk", "fonts", "linux", "font-manager"]
 classifiers = [
   "Development Status :: 3 - Alpha",
