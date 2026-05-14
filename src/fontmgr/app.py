@@ -445,9 +445,9 @@ class FontTile(Gtk.EventBox):
     """Selectable compact preview tile for a font."""
 
     WIDTH = 250
-    HEIGHT = 80
+    HEIGHT = 150
     PREVIEW_WIDTH = 232
-    PREVIEW_HEIGHT = 46
+    PREVIEW_HEIGHT = 104
 
     def __init__(self, record: FontRecord, on_select, on_open):
         super().__init__()
@@ -548,6 +548,7 @@ class FontPane(Gtk.Box):
         self.stack = Gtk.Stack()
         self.flowbox = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, min_children_per_line=1, max_children_per_line=100)
         self.flowbox.set_homogeneous(True)
+        self.flowbox.set_valign(Gtk.Align.START)
         self.flow_scroll = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER, vscrollbar_policy=Gtk.PolicyType.AUTOMATIC)
         self.flow_scroll.add(self.flowbox)
         self.flow_scroll.connect("size-allocate", lambda *_args: self.queue_visible_preview_update())
@@ -1185,7 +1186,7 @@ class FontManagerWindow(Gtk.ApplicationWindow):
 
 
 class FontViewDialog(Gtk.Dialog):
-    PREVIEW_WIDTH = 640
+    PREVIEW_WIDTH = 648
     PREVIEW_HEIGHT = 240
     DEFAULT_PREVIEW_TEXT = "The quick brown fox jumps over the lazy dog."
 
@@ -1193,7 +1194,8 @@ class FontViewDialog(Gtk.Dialog):
         super().__init__(title="View font", transient_for=parent, flags=Gtk.DialogFlags.MODAL)
         self.record = record
         self.add_buttons(Gtk.STOCK_CLOSE, Gtk.ResponseType.CLOSE)
-        self.set_default_size(720, 560)
+        self.set_default_size(680, 560)
+        self.set_size_request(680, 560)
         self.set_resizable(False)
         area = self.get_content_area()
         details = Gtk.Grid(column_spacing=24, row_spacing=8, margin=16)
@@ -1223,7 +1225,6 @@ class FontViewDialog(Gtk.Dialog):
         area.pack_start(self.preview_entry, False, False, 0)
 
         size_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8, margin=16)
-        size_box.pack_start(Gtk.Label(label="Font size:"), False, False, 0)
         self.size_scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 8, 72, 1)
         self.size_scale.set_value(42)
         self.size_scale.set_digits(0)
