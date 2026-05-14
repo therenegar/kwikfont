@@ -5,10 +5,12 @@ from __future__ import annotations
 import datetime as dt
 import shutil
 import subprocess
+from functools import lru_cache
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
+from xml.sax.saxutils import escape
 
 import cairo
 import gi
@@ -17,7 +19,8 @@ gi.require_version("Gtk", "3.0")
 gi.require_version("Gdk", "3.0")
 gi.require_version("Pango", "1.0")
 gi.require_version("PangoCairo", "1.0")
-from gi.repository import Gdk, Gio, Gtk, Pango, PangoCairo  # noqa: E402
+gi.require_version("GdkPixbuf", "2.0")
+from gi.repository import Gdk, GdkPixbuf, Gio, GLib, Gtk, Pango, PangoCairo  # noqa: E402
 
 FONT_EXTENSIONS = {".ttf", ".otf", ".ttc", ".otc", ".woff", ".woff2", ".pfb", ".pfa"}
 USER_FONT_DIR = Path.home() / ".fonts"
@@ -164,6 +167,16 @@ def discover_fonts(folder: Path, recursive: bool = False) -> list[FontRecord]:
     return records
 
 
+def discover_installed_fonts(scope: str = "all") -> list[FontRecord]:
+    """Discover installed fonts from the known user/system font roots only."""
+
+    if scope == "user":
+        return discover_fonts(USER_FONT_DIR, recursive=True)
+    if scope == "system":
+        return discover_fonts(SYSTEM_FONT_DIR, recursive=True)
+    return discover_fonts(USER_FONT_DIR, recursive=True) + discover_fonts(SYSTEM_FONT_DIR, recursive=True)
+
+
 def human_size(size: int) -> str:
     for unit in ("B", "KB", "MB", "GB"):
         if size < 1024 or unit == "GB":
@@ -172,37 +185,205 @@ def human_size(size: int) -> str:
     return f"{size:.1f}GB"
 
 
-class FontTile(Gtk.EventBox):
-    """Selectable preview tile for a font."""
+@lru_cache(maxsize=64)
+def load_outline_font(font_path: str):
+    """Load a fontTools font and reusable tables for outline rendering."""
 
-    def __init__(self, record: FontRecord, on_select):
+    from fontTools.ttLib import TTFont
+
+    font = TTFont(font_path)
+    glyph_set = font.getGlyphSet()
+    cmap = font.getBestCmap() or {}
+    hmtx = font["hmtx"].metrics if "hmtx" in font else {}
+    units_per_em = font["head"].unitsPerEm if "head" in font else 1000
+    return font, glyph_set, cmap, hmtx, units_per_em
+
+
+def glyph_advance(glyph_name: str | None, hmtx: dict, units_per_em: int) -> int:
+    if glyph_name and glyph_name in hmtx:
+        return hmtx[glyph_name][0]
+    return int(units_per_em * 0.35 if glyph_name is None else units_per_em * 0.6)
+
+
+def create_outline_svg(record: FontRecord, text: str, width: int, height: int, font_size: int, fill: str = "#111111") -> str:
+    """Build an SVG preview whose glyphs are converted to path outlines."""
+
+    try:
+        from fontTools.pens.svgPathPen import SVGPathPen
+
+        _font, glyph_set, cmap, hmtx, units_per_em = load_outline_font(str(record.path))
+        scale = font_size / units_per_em
+        baseline = min(height - 8, int(height * 0.78))
+        x_units = 0
+        paths: list[str] = []
+        for character in text:
+            glyph_name = cmap.get(ord(character))
+            if glyph_name and glyph_name in glyph_set:
+                pen = SVGPathPen(glyph_set)
+                glyph_set[glyph_name].draw(pen)
+                commands = pen.getCommands()
+                if commands:
+                    paths.append(f'<path d="{commands}" transform="translate({x_units} 0)"/>')
+            x_units += glyph_advance(glyph_name, hmtx, units_per_em)
+        outlined = "".join(paths)
+        return (
+            f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">'
+            f'<defs><clipPath id="previewClip"><rect x="0" y="0" width="{width}" height="{height}"/></clipPath></defs>'
+            f'<g clip-path="url(#previewClip)" fill="{fill}" transform="translate(0 {baseline}) scale({scale} -{scale})">{outlined}</g>'
+            '</svg>'
+        )
+    except Exception:
+        safe_text = escape(text)
+        safe_family = escape(record.family, {'"': '&quot;'})
+        return (
+            f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">'
+            f'<text x="0" y="{height - 8}" font-family="{safe_family}" font-size="{font_size}" fill="{fill}">{safe_text}</text>'
+            '</svg>'
+        )
+
+
+def svg_to_pixbuf(svg: str, width: int, height: int) -> GdkPixbuf.Pixbuf | None:
+    """Render SVG bytes into a pixbuf for display in GTK widgets."""
+
+    try:
+        loader = GdkPixbuf.PixbufLoader.new_with_type("svg")
+        loader.set_size(width, height)
+        loader.write(svg.encode())
+        loader.close()
+        return loader.get_pixbuf()
+    except Exception:
+        return None
+
+
+class CairoOutlinePen:
+    """fontTools pen that replays glyph contours into a Cairo context."""
+
+    def __init__(self, ctx: cairo.Context):
+        from fontTools.pens.basePen import BasePen
+
+        class _Pen(BasePen):
+            def __init__(self, glyph_set):
+                super().__init__(glyph_set)
+                self.current_point = (0.0, 0.0)
+
+            def _moveTo(self, point):
+                self.current_point = point
+                ctx.move_to(*point)
+
+            def _lineTo(self, point):
+                self.current_point = point
+                ctx.line_to(*point)
+
+            def _curveToOne(self, point1, point2, point3):
+                self.current_point = point3
+                ctx.curve_to(point1[0], point1[1], point2[0], point2[1], point3[0], point3[1])
+
+            def _qCurveToOne(self, point1, point2):
+                point0 = self.current_point
+                curve1 = (point0[0] + (2.0 / 3.0) * (point1[0] - point0[0]), point0[1] + (2.0 / 3.0) * (point1[1] - point0[1]))
+                curve2 = (point2[0] + (2.0 / 3.0) * (point1[0] - point2[0]), point2[1] + (2.0 / 3.0) * (point1[1] - point2[1]))
+                self._curveToOne(curve1, curve2, point2)
+
+            def _closePath(self):
+                ctx.close_path()
+
+        self.pen_class = _Pen
+
+    def for_glyph_set(self, glyph_set):
+        return self.pen_class(glyph_set)
+
+
+def draw_outline_text(ctx: cairo.Context, record: FontRecord, text: str, x: float, baseline: float, font_size: float, max_width: float | None = None) -> None:
+    """Draw text as filled font outlines on a Cairo context."""
+
+    try:
+        _font, glyph_set, cmap, hmtx, units_per_em = load_outline_font(str(record.path))
+    except Exception:
+        ctx.move_to(x, baseline)
+        ctx.show_text(text)
+        return
+
+    scale = font_size / units_per_em
+    pen_x = 0.0
+    pen_factory = CairoOutlinePen(ctx)
+    for character in text:
+        glyph_name = cmap.get(ord(character))
+        advance = glyph_advance(glyph_name, hmtx, units_per_em)
+        if max_width is not None and pen_x * scale > max_width:
+            break
+        if glyph_name and glyph_name in glyph_set:
+            ctx.save()
+            ctx.translate(x + pen_x * scale, baseline)
+            ctx.scale(scale, -scale)
+            glyph_set[glyph_name].draw(pen_factory.for_glyph_set(glyph_set))
+            ctx.fill()
+            ctx.restore()
+        pen_x += advance
+
+
+class FontTile(Gtk.EventBox):
+    """Selectable compact preview tile for a font."""
+
+    WIDTH = 250
+    HEIGHT = 80
+    PREVIEW_WIDTH = 232
+    PREVIEW_HEIGHT = 46
+
+    def __init__(self, record: FontRecord, on_select, on_open):
         super().__init__()
         self.record = record
         self.selected = False
         self.on_select = on_select
+        self.on_open = on_open
         self.set_visible_window(True)
-        self.set_size_request(260, 100)
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6, margin=10)
+        self.set_size_request(self.WIDTH, self.HEIGHT)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, margin=8)
         name = Gtk.Label(label=record.name, xalign=0)
-        preview = Gtk.Label(label=record.name, xalign=0)
-        preview.set_ellipsize(Pango.EllipsizeMode.END)
-        apply_font_css(preview, record.family, 40)
+        name.set_ellipsize(Pango.EllipsizeMode.END)
+        self.preview = Gtk.Image()
+        self.preview.set_size_request(self.PREVIEW_WIDTH, self.PREVIEW_HEIGHT)
         box.pack_start(name, False, False, 0)
-        box.pack_start(preview, True, True, 0)
+        box.pack_start(self.preview, False, False, 0)
         self.add(box)
         self.connect("button-press-event", self._clicked)
+        self.preview_loaded = False
         self.update_style()
 
     def _clicked(self, _widget, event):
-        self.on_select(self.record, bool(event.state & Gdk.ModifierType.CONTROL_MASK))
+        if event.type == Gdk.EventType._2BUTTON_PRESS:
+            self.on_select(self.record, False)
+            self.on_open(self.record)
+        else:
+            self.on_select(self.record, bool(event.state & Gdk.ModifierType.CONTROL_MASK))
         return True
 
     def set_selected(self, selected: bool) -> None:
+        if self.selected == selected:
+            return
         self.selected = selected
         self.update_style()
+        if self.preview_loaded:
+            self.update_preview()
+
+    def ensure_preview(self) -> None:
+        if self.preview_loaded:
+            return
+        self.update_preview()
+
+    def update_preview(self) -> None:
+        fill = "#0f3d91" if self.selected else "#111111"
+        svg = create_outline_svg(self.record, self.record.name, self.PREVIEW_WIDTH, self.PREVIEW_HEIGHT, 38, fill)
+        pixbuf = svg_to_pixbuf(svg, self.PREVIEW_WIDTH, self.PREVIEW_HEIGHT)
+        if pixbuf is not None:
+            self.preview.set_from_pixbuf(pixbuf)
+            self.preview_loaded = True
 
     def update_style(self) -> None:
-        css = "background: #111; color: #fff; border: 1px solid #111;" if self.selected else "background: #fff; color: #111; border: 1px solid #999;"
+        css = (
+            "background: #dbeafe; color: #0f3d91; border: 2px solid #2563eb;"
+            if self.selected
+            else "background: #ffffff; color: #111111; border: 1px solid #111111;"
+        )
         apply_css(self, f"eventbox {{ {css} }}")
 
 
@@ -216,6 +397,7 @@ class FontPane(Gtk.Box):
         self.records: list[FontRecord] = []
         self.selected_records: list[FontRecord] = []
         self.loaded = False
+        self.lazy_preview_source_id = 0
         self.current_folder = Path.cwd()
         self.show_fonts = Gtk.RadioButton.new_with_label_from_widget(None, "Show fonts")
         self.show_files = Gtk.RadioButton.new_with_label_from_widget(self.show_fonts, "Show files")
@@ -241,8 +423,12 @@ class FontPane(Gtk.Box):
         self.stack = Gtk.Stack()
         self.flowbox = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, min_children_per_line=3, max_children_per_line=3)
         self.flowbox.set_homogeneous(True)
-        flow_scroll = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.ALWAYS, vscrollbar_policy=Gtk.PolicyType.AUTOMATIC)
-        flow_scroll.add(self.flowbox)
+        self.flow_scroll = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.ALWAYS, vscrollbar_policy=Gtk.PolicyType.AUTOMATIC)
+        self.flow_scroll.add(self.flowbox)
+        self.flow_scroll.connect("size-allocate", lambda *_args: self.queue_visible_preview_update())
+        self.flowbox.connect("size-allocate", lambda *_args: self.queue_visible_preview_update())
+        self.flow_scroll.get_hadjustment().connect("value-changed", lambda *_args: self.queue_visible_preview_update())
+        self.flow_scroll.get_vadjustment().connect("value-changed", lambda *_args: self.queue_visible_preview_update())
         self.file_store = Gtk.ListStore(str, str, str, str, str, str, object)
         self.file_view = Gtk.TreeView(model=self.file_store)
         for idx, title in enumerate(("Name", "Family", "Type", "File Name", "Size", "Date")):
@@ -255,7 +441,7 @@ class FontPane(Gtk.Box):
         self.file_view.get_selection().connect("changed", self._file_selection_changed)
         file_scroll = Gtk.ScrolledWindow(vscrollbar_policy=Gtk.PolicyType.ALWAYS)
         file_scroll.add(self.file_view)
-        self.stack.add_named(flow_scroll, "fonts")
+        self.stack.add_named(self.flow_scroll, "fonts")
         self.stack.add_named(file_scroll, "files")
         content.pack2(self.stack, resize=True, shrink=False)
         self.pack_start(content, True, True, 0)
@@ -348,12 +534,10 @@ class FontPane(Gtk.Box):
             group = getattr(self, "current_group", None)
             if scope == "group" and group:
                 self.records = discover_fonts(group)
-            elif scope == "user":
-                self.records = discover_fonts(USER_FONT_DIR, recursive=True)
-            elif scope == "system":
-                self.records = discover_fonts(SYSTEM_FONT_DIR, recursive=True)
+            elif scope in {"user", "system"}:
+                self.records = discover_installed_fonts(scope)
             else:
-                self.records = discover_fonts(USER_FONT_DIR, recursive=True) + discover_fonts(SYSTEM_FONT_DIR, recursive=True)
+                self.records = discover_installed_fonts("all")
         self.selected_records = []
         self._populate_fonts()
         self._populate_files()
@@ -362,8 +546,40 @@ class FontPane(Gtk.Box):
         for child in self.flowbox.get_children():
             self.flowbox.remove(child)
         for record in self.records:
-            self.flowbox.add(FontTile(record, self._tile_selected))
+            self.flowbox.add(FontTile(record, self._tile_selected, self.app.open_font_record))
         self.flowbox.show_all()
+        self.queue_visible_preview_update()
+
+    def queue_visible_preview_update(self) -> None:
+        if self.lazy_preview_source_id:
+            return
+        self.lazy_preview_source_id = GLib.idle_add(self.render_visible_previews)
+
+    def render_visible_previews(self) -> bool:
+        self.lazy_preview_source_id = 0
+        if not self.show_fonts.get_active() or not self.flowbox.get_realized():
+            return False
+        hadjustment = self.flow_scroll.get_hadjustment()
+        vadjustment = self.flow_scroll.get_vadjustment()
+        viewport_left = hadjustment.get_value()
+        viewport_right = viewport_left + hadjustment.get_page_size()
+        viewport_top = vadjustment.get_value()
+        viewport_bottom = viewport_top + vadjustment.get_page_size()
+        preload_margin = FontTile.HEIGHT * 2
+        for child in self.flowbox.get_children():
+            tile = child.get_child()
+            if not isinstance(tile, FontTile) or tile.preview_loaded:
+                continue
+            allocation = child.get_allocation()
+            child_left = allocation.x
+            child_right = allocation.x + allocation.width
+            child_top = allocation.y
+            child_bottom = allocation.y + allocation.height
+            horizontally_visible = child_right >= viewport_left and child_left <= viewport_right
+            vertically_near = child_bottom >= viewport_top - preload_margin and child_top <= viewport_bottom + preload_margin
+            if horizontally_visible and vertically_near:
+                tile.ensure_preview()
+        return False
 
     def _populate_files(self) -> None:
         self.file_store.clear()
@@ -568,11 +784,14 @@ class FontManagerWindow(Gtk.ApplicationWindow):
         self._fc_cache()
         self.refresh_all()
 
+    def open_font_record(self, record: FontRecord) -> None:
+        FontViewDialog(self, record).run_dialog()
+
     def view_font(self, *_args) -> None:
         records = self.selected_records()
         if not records:
             return
-        FontViewDialog(self, records[0]).run_dialog()
+        self.open_font_record(records[0])
 
     def find_font(self, *_args) -> None:
         dialog = Gtk.Dialog(title="Find Font", transient_for=self, flags=Gtk.DialogFlags.MODAL)
@@ -679,7 +898,8 @@ def create_pdf_catalog(filename: Path, records: list[FontRecord]) -> None:
             if y > height - 80:
                 surface.show_page()
                 y = 36
-            draw_text(SAMPLE_TEXT, f"{record.family} 16", 32, y)
+            ctx.set_source_rgb(0, 0, 0)
+            draw_outline_text(ctx, record, SAMPLE_TEXT, 32, y + 18, 18, max_width=width - 64)
             y += 24
             draw_text(f"{record.style} ({record.path})", "Monospace 7", 32, y)
             y += 18

@@ -12,14 +12,14 @@ enBox Font Manager is a standalone GTK utility for browsing, previewing, install
 - Modal font viewer with font metadata, editable preview text, and size selector from 8 pt to 72 pt.
 - User font installation and uninstallation with best-effort `fc-cache` refresh.
 - Font groups backed by directories in `~/.fonts`.
-- PDF font catalog/specimen generation for selected fonts.
+- PDF font catalog/specimen generation for selected fonts, with preview text drawn from font outlines.
 
 ## Requirements
 
 Install the native GTK/Python bindings supplied by your Linux distribution. On Debian or Ubuntu:
 
 ```bash
-sudo apt install python3-gi python3-gi-cairo gir1.2-gtk-3.0 python3-cairo fontconfig
+sudo apt install python3-gi python3-gi-cairo gir1.2-gtk-3.0 gir1.2-gdkpixbuf-2.0 python3-cairo fontconfig librsvg2-common
 ```
 
 ## Run from source
@@ -45,4 +45,5 @@ enbox-font-manager
 
 - User font operations write to `~/.fonts`.
 - System fonts are listed from `/usr/share/fonts`; uninstalling system fonts is intentionally skipped to avoid requiring elevated privileges or deleting distribution-managed files.
+- Font previews and PDF specimens use `fonttools` to convert font glyphs into outlines so they do not depend on the font already being installed.
 - The metadata parser is intentionally best-effort and derives family/style names from filenames so the app remains lightweight and self-contained.
