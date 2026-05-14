@@ -14,6 +14,9 @@ import cairo
 import gi
 
 gi.require_version("Gtk", "3.0")
+gi.require_version("Gdk", "3.0")
+gi.require_version("Pango", "1.0")
+gi.require_version("PangoCairo", "1.0")
 from gi.repository import Gdk, Gio, Gtk, Pango, PangoCairo  # noqa: E402
 
 FONT_EXTENSIONS = {".ttf", ".otf", ".ttc", ".otc", ".woff", ".woff2", ".pfb", ".pfa"}
