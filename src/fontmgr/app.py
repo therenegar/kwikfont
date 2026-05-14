@@ -444,10 +444,10 @@ def create_wrapped_outline_pixbuf(record: FontRecord, text: str, width: int, hei
 class FontTile(Gtk.EventBox):
     """Selectable compact preview tile for a font."""
 
-    WIDTH = 250
-    HEIGHT = 150
-    PREVIEW_WIDTH = 232
-    PREVIEW_HEIGHT = 104
+    WIDTH = 220
+    HEIGHT = 50
+    PREVIEW_WIDTH = 220
+    PREVIEW_HEIGHT = 50
 
     def __init__(self, record: FontRecord, on_select, on_open):
         super().__init__()
@@ -1263,7 +1263,7 @@ def create_pdf_catalog(filename: Path, records: list[FontRecord]) -> None:
         _ink, logical = layout.get_pixel_extents()
         return logical.height
 
-    draw_text("Font Catalog", "Sans Bold 24", 32, y)
+    draw_text("Font Catalog", "Helvetica 24", 30, y)
     y += 52
     for family in sorted({r.family for r in records}):
         family_records = [r for r in records if r.family == family]
@@ -1275,7 +1275,7 @@ def create_pdf_catalog(filename: Path, records: list[FontRecord]) -> None:
         ctx.line_to(width - 32, y + 10)
         ctx.stroke()
         layout.set_text(family, -1)
-        layout.set_font_description(Pango.FontDescription("Sans 14"))
+        layout.set_font_description(Pango.FontDescription("Helvetica 14"))
         _ink, logical = layout.get_pixel_extents()
         ctx.set_source_rgb(1, 1, 1)
         ctx.rectangle(28, y - 2, logical.width + 8, logical.height + 4)
