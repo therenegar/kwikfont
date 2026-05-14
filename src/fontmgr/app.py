@@ -443,8 +443,10 @@ class FontTile(Gtk.EventBox):
         self.set_size_request(self.WIDTH, self.HEIGHT)
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, margin=8)
         name = Gtk.Label(label=record.name, xalign=0)
+        name.set_halign(Gtk.Align.START)
         name.set_ellipsize(Pango.EllipsizeMode.END)
         self.preview = Gtk.Image()
+        self.preview.set_halign(Gtk.Align.START)
         self.preview.set_size_request(self.PREVIEW_WIDTH, self.PREVIEW_HEIGHT)
         box.pack_start(name, False, False, 0)
         box.pack_start(self.preview, False, False, 0)
@@ -475,7 +477,7 @@ class FontTile(Gtk.EventBox):
         self.update_preview()
 
     def update_preview(self) -> None:
-        fill = (0.06, 0.24, 0.57) if self.selected else (0.07, 0.07, 0.07)
+        fill = (1.0, 1.0, 1.0) if self.selected else (0.0, 0.0, 0.0)
         pixbuf = create_outline_pixbuf(self.record, self.record.name, self.PREVIEW_WIDTH, self.PREVIEW_HEIGHT, 38, fill)
         if pixbuf is not None:
             self.preview.set_from_pixbuf(pixbuf)
@@ -483,11 +485,11 @@ class FontTile(Gtk.EventBox):
 
     def update_style(self) -> None:
         css = (
-            "background: #dbeafe; color: #0f3d91; border: 2px solid #2563eb;"
+            "background: @theme_selected_bg_color; color: @theme_selected_fg_color; border: 1px solid #111111;"
             if self.selected
             else "background: #ffffff; color: #111111; border: 1px solid #111111;"
         )
-        apply_css(self, f"eventbox {{ {css} }}")
+        apply_css(self, f"eventbox {{ {css} }} eventbox * {{ color: inherit; }}")
 
 
 class FontPane(Gtk.Box):
