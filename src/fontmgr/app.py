@@ -410,6 +410,37 @@ def create_outline_pixbuf(record: FontRecord, text: str, width: int, height: int
     return Gdk.pixbuf_get_from_surface(surface, 0, 0, width, height)
 
 
+def create_wrapped_outline_pixbuf(record: FontRecord, text: str, width: int, height: int, font_size: int, fill: tuple[float, float, float]) -> GdkPixbuf.Pixbuf | None:
+    """Render wrapped preview text onto an opaque white pixbuf."""
+
+    surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, width, height)
+    ctx = cairo.Context(surface)
+    ctx.set_source_rgb(1.0, 1.0, 1.0)
+    ctx.paint()
+    ctx.set_source_rgb(*fill)
+    line_height = int(font_size * 1.35)
+    baseline = font_size + 10
+    current_line = ""
+
+    def draw_line(line: str, y: int) -> None:
+        draw_outline_text(ctx, record, line, 0, y, font_size, max_width=width)
+
+    for word in text.split():
+        candidate = f"{current_line} {word}".strip()
+        if current_line and len(candidate) * font_size * 0.55 > width:
+            draw_line(current_line, baseline)
+            baseline += line_height
+            current_line = word
+            if baseline > height - 8:
+                break
+        else:
+            current_line = candidate
+    if current_line and baseline <= height - 8:
+        draw_line(current_line, baseline)
+    surface.flush()
+    return Gdk.pixbuf_get_from_surface(surface, 0, 0, width, height)
+
+
 class FontTile(Gtk.EventBox):
     """Selectable compact preview tile for a font."""
 
@@ -1044,7 +1075,7 @@ class FontViewDialog(Gtk.Dialog):
     def update_preview(self) -> None:
         size = int(self.size_combo.get_active_text() or "42")
         text = self.preview_entry.get_text() or self.DEFAULT_PREVIEW_TEXT
-        pixbuf = create_outline_pixbuf(self.record, text, self.PREVIEW_WIDTH, self.PREVIEW_HEIGHT, size, (0.0, 0.0, 0.0))
+        pixbuf = create_wrapped_outline_pixbuf(self.record, text, self.PREVIEW_WIDTH, self.PREVIEW_HEIGHT, size, (0.0, 0.0, 0.0))
         if pixbuf is not None:
             self.preview.set_from_pixbuf(pixbuf)
 
