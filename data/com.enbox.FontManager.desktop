@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=enBox Font Manager
+Comment=Browse, view, install, and print Linux fonts
+Exec=enbox-font-manager
+Icon=preferences-desktop-font
+Terminal=false
+Categories=GTK;Graphics;Utility;
