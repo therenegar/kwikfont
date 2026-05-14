@@ -62,12 +62,6 @@ class FontIdentity:
     style: str
 
 
-def css_quote(value: str) -> str:
-    """Escape a string for use as a quoted GTK CSS value."""
-
-    return value.replace("\\", "\\\\").replace('"', '\\"')
-
-
 def apply_css(widget: Gtk.Widget, css: str) -> None:
     """Attach replacement CSS to a single widget without accumulating providers."""
 
@@ -81,15 +75,6 @@ def apply_css(widget: Gtk.Widget, css: str) -> None:
     setattr(widget, "_fontmgr_css_provider", provider)
 
 
-def apply_font_css(widget: Gtk.Widget, family: str, size_pt: int) -> None:
-    """Apply per-widget font styling with GTK CSS instead of deprecated APIs."""
-
-    family = css_quote(family)
-    apply_css(
-        widget,
-        f'* {{ font-family: "{family}"; font-size: {size_pt}pt; }} '
-        f'text {{ font-family: "{family}"; font-size: {size_pt}pt; }}',
-    )
 
 def is_font_file(path: Path) -> bool:
     return path.is_file() and path.suffix.lower() in FONT_EXTENSIONS
@@ -485,7 +470,7 @@ class FontTile(Gtk.EventBox):
 
     def update_style(self) -> None:
         css = (
-            "background: @theme_selected_bg_color; color: @theme_selected_fg_color; border: 1px solid #111111;"
+            "background: @theme_selected_bg_color; color: @theme_selected_fg_color; border: 2px solid #111111;"
             if self.selected
             else "background: #ffffff; color: #111111; border: 1px solid #111111;"
         )
@@ -713,7 +698,7 @@ class FontPane(Gtk.Box):
         else:
             self.stack.set_visible_child_name("files")
         if self.mode == "browse":
-            self.records = discover_fonts(self.current_folder)
+            self.records = discover_fonts(self.current_folder, recursive=True)
         else:
             scope = getattr(self, "current_scope", "all")
             group = getattr(self, "current_group", None)
@@ -1013,11 +998,15 @@ class FontManagerWindow(Gtk.ApplicationWindow):
 
 
 class FontViewDialog(Gtk.Dialog):
+    PREVIEW_WIDTH = 640
+    PREVIEW_HEIGHT = 240
+    DEFAULT_PREVIEW_TEXT = "The quick brown fox jumps over the lazy dog."
+
     def __init__(self, parent: Gtk.Window, record: FontRecord):
         super().__init__(title="View font", transient_for=parent, flags=Gtk.DialogFlags.MODAL)
         self.record = record
         self.add_buttons(Gtk.STOCK_CLOSE, Gtk.ResponseType.CLOSE)
-        self.set_default_size(420, 520)
+        self.set_default_size(720, 560)
         area = self.get_content_area()
         details = Gtk.Grid(column_spacing=24, row_spacing=8, margin=16)
         rows = [("Font name", record.name), ("File name", str(record.path)), ("Font type", record.kind), ("Installation status", "This font is currently installed." if record.installed else "This font is not currently installed.")]
@@ -1025,25 +1014,39 @@ class FontViewDialog(Gtk.Dialog):
             details.attach(Gtk.Label(label=label, xalign=0), 0, row, 1, 1)
             details.attach(Gtk.Label(label=value, xalign=0), 1, row, 1, 1)
         area.pack_start(details, False, False, 0)
-        self.preview = Gtk.TextView(wrap_mode=Gtk.WrapMode.WORD_CHAR, margin=16)
-        self.preview.get_buffer().set_text("The quick brown\nfox jumps over\nthe lazy dog")
-        apply_font_css(self.preview, record.family, 42)
-        scroll = Gtk.ScrolledWindow(min_content_height=240)
-        scroll.add(self.preview)
-        area.pack_start(scroll, True, True, 0)
+
+        preview_frame = Gtk.EventBox(margin_left=16, margin_right=16, margin_top=8, margin_bottom=8)
+        apply_css(preview_frame, "eventbox { background: #ffffff; border: 1px solid #111111; }")
+        self.preview = Gtk.Image()
+        self.preview.set_halign(Gtk.Align.START)
+        self.preview.set_valign(Gtk.Align.CENTER)
+        self.preview.set_size_request(self.PREVIEW_WIDTH, self.PREVIEW_HEIGHT)
+        preview_frame.add(self.preview)
+        area.pack_start(preview_frame, True, True, 0)
+
+        self.preview_entry = Gtk.Entry(margin_left=16, margin_right=16)
+        self.preview_entry.set_hexpand(True)
+        self.preview_entry.set_text(self.DEFAULT_PREVIEW_TEXT)
+        self.preview_entry.connect("changed", lambda _entry: self.update_preview())
+        area.pack_start(self.preview_entry, False, False, 0)
+
         size_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8, margin=16)
         size_box.pack_start(Gtk.Label(label="Font size:"), False, False, 0)
-        combo = Gtk.ComboBoxText()
+        self.size_combo = Gtk.ComboBoxText()
         for size in range(8, 73, 2):
-            combo.append_text(str(size))
-        combo.set_active((42 - 8) // 2)
-        combo.connect("changed", self._size_changed)
-        size_box.pack_start(combo, False, False, 0)
+            self.size_combo.append_text(str(size))
+        self.size_combo.set_active((42 - 8) // 2)
+        self.size_combo.connect("changed", lambda _combo: self.update_preview())
+        size_box.pack_start(self.size_combo, False, False, 0)
         area.pack_start(size_box, False, False, 0)
+        self.update_preview()
 
-    def _size_changed(self, combo: Gtk.ComboBoxText) -> None:
-        size = combo.get_active_text() or "42"
-        apply_font_css(self.preview, self.record.family, int(size))
+    def update_preview(self) -> None:
+        size = int(self.size_combo.get_active_text() or "42")
+        text = self.preview_entry.get_text() or self.DEFAULT_PREVIEW_TEXT
+        pixbuf = create_outline_pixbuf(self.record, text, self.PREVIEW_WIDTH, self.PREVIEW_HEIGHT, size, (0.0, 0.0, 0.0))
+        if pixbuf is not None:
+            self.preview.set_from_pixbuf(pixbuf)
 
     def run_dialog(self) -> None:
         self.show_all()
