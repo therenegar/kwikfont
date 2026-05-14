@@ -444,11 +444,12 @@ def create_wrapped_outline_pixbuf(record: FontRecord, text: str, width: int, hei
 
 
 class FontTile(Gtk.EventBox):
-    """Selectable compact preview tile for a font."""
+    """Selectable fixed-size preview tile for a font."""
 
-    WIDTH = 220
-    HEIGHT = 50
-    PREVIEW_WIDTH = 220
+    WIDTH = 240
+    HEIGHT = 96
+    MARGIN = 8
+    PREVIEW_WIDTH = WIDTH - (MARGIN * 2)
     PREVIEW_HEIGHT = 50
 
     def __init__(self, record: FontRecord, on_select, on_open):
@@ -459,7 +460,12 @@ class FontTile(Gtk.EventBox):
         self.on_open = on_open
         self.set_visible_window(True)
         self.set_size_request(self.WIDTH, self.HEIGHT)
-        self.style_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, margin=8)
+        self.set_halign(Gtk.Align.START)
+        self.set_valign(Gtk.Align.START)
+        self.set_hexpand(False)
+        self.set_vexpand(False)
+        self.style_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, margin=self.MARGIN)
+        self.style_box.set_size_request(self.PREVIEW_WIDTH, self.HEIGHT - (self.MARGIN * 2))
         self.style_box.get_style_context().add_class("font-tile")
         name = Gtk.Label(label=record.name, xalign=0)
         name.set_halign(Gtk.Align.START)
@@ -550,7 +556,7 @@ class FontPane(Gtk.Box):
         content.pack1(self.sidebar, resize=False, shrink=False)
         self.stack = Gtk.Stack()
         self.flowbox = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, min_children_per_line=1, max_children_per_line=100)
-        self.flowbox.set_homogeneous(True)
+        self.flowbox.set_homogeneous(False)
         self.flowbox.set_valign(Gtk.Align.START)
         self.flow_scroll = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER, vscrollbar_policy=Gtk.PolicyType.AUTOMATIC)
         self.flow_scroll.add(self.flowbox)
