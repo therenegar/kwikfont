@@ -496,7 +496,7 @@ class FontTile(Gtk.EventBox):
         self.update_preview()
 
     def update_preview(self) -> None:
-        fill = (1.0, 1.0, 1.0) if self.selected else (0.0, 0.0, 0.0)
+        fill = (0.0, 0.0, 1.0) if self.selected else (0.0, 0.0, 0.0)
         pixbuf = create_outline_pixbuf(self.record, self.record.name, self.PREVIEW_WIDTH, self.PREVIEW_HEIGHT, 38, fill)
         if pixbuf is not None:
             self.preview.set_from_pixbuf(pixbuf)
@@ -515,7 +515,7 @@ class FontPane(Gtk.Box):
     """Shared Browse Fonts/My Fonts layout."""
 
     def __init__(self, app: "FontManagerWindow", mode: str, autoload: bool = True):
-        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin=16)
+        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=10, margin=10)
         self.app = app
         self.mode = mode
         self.all_records: list[FontRecord] = []
@@ -538,7 +538,7 @@ class FontPane(Gtk.Box):
         top = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         heading = Gtk.Label(label="Browse Fonts" if self.mode == "browse" else "My Fonts", xalign=0)
         heading.get_style_context().add_class("title-1")
-        apply_css(heading, "label { font-size: 28pt; }")
+        apply_css(heading, "label { font-size: 20pt; font-weight: bold; }")
         top.pack_start(heading, True, True, 0)
         top.pack_start(self.show_fonts, False, False, 8)
         top.pack_start(self.show_files, False, False, 0)
@@ -583,6 +583,7 @@ class FontPane(Gtk.Box):
                 ("Delete Group", self.delete_group),
                 ("Add Font to Group", lambda _b: self.app.add_selected_to_group()),
                 ("Remove from Group", lambda _b: self.app.remove_selected_from_group()),
+                ("Uninstall Font", lambda _b: self.app.uninstall_selected()),
             ):
                 button = Gtk.Button(label=label)
                 button.connect("clicked", cb)
@@ -608,20 +609,20 @@ class FontPane(Gtk.Box):
 
     def _build_sidebar(self) -> Gtk.Widget:
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6, margin=8)
-        box.set_size_request(170, -1)
+        box.set_size_request(220, -1)
         if self.mode == "browse":
             box.pack_start(Gtk.Label(label="FOLDERS", xalign=0), False, False, 4)
             box.pack_start(self._build_folder_tree(), True, True, 0)
         else:
-            box.pack_start(Gtk.Label(label="MY INSTALLED FONTS", xalign=0), False, False, 4)
-            for label, key in (("All fonts", "all"), ("User fonts", "user"), ("System fonts", "system")):
+            box.pack_start(Gtk.Label(label="INSTALLED FONTS", xalign=0), False, False, 4)
+            for label, key in (("All fonts", "all"), ("My fonts", "user"), ("System fonts", "system")):
                 button = Gtk.RadioButton.new_with_label_from_widget(getattr(self, "_scope_group", None), label)
                 self._scope_group = button
                 button.connect("toggled", self._my_scope_changed, key)
                 if key == "all":
                     button.set_active(True)
                 box.pack_start(button, False, False, 0)
-            box.pack_start(Gtk.Label(label="MY FONT GROUPS", xalign=0), False, False, 18)
+            box.pack_start(Gtk.Label(label="MY FONT GROUPS", xalign=0), False, False, 10)
             self.groups_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
             box.pack_start(self.groups_box, False, False, 0)
             self._load_group_buttons()
@@ -941,6 +942,7 @@ class FontManagerWindow(Gtk.ApplicationWindow):
     def __init__(self, app: Gtk.Application):
         super().__init__(application=app, title=APP_NAME)
         self.set_default_size(1100, 760)
+        self.set_icon_name("fonts")
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self.add(root)
         self.status_message = "Ready"
@@ -1275,7 +1277,7 @@ def create_pdf_catalog(filename: Path, records: list[FontRecord]) -> None:
         _ink, logical = layout.get_pixel_extents()
         return logical.height
 
-    draw_text("Font Catalog", "Helvetica 24", 30, y)
+    draw_text("Font Catalog", "Sans Bold 18", 30, y)
     y += 52
     for family in sorted({r.family for r in records}):
         family_records = [r for r in records if r.family == family]
@@ -1288,7 +1290,7 @@ def create_pdf_catalog(filename: Path, records: list[FontRecord]) -> None:
         ctx.line_to(width - 32, y + 10.5)
         ctx.stroke()
         layout.set_text(family, -1)
-        layout.set_font_description(Pango.FontDescription("Helvetica 14"))
+        layout.set_font_description(Pango.FontDescription("Sans 12"))
         _ink, logical = layout.get_pixel_extents()
         ctx.set_source_rgb(1, 1, 1)
         ctx.rectangle(28, y - 2, logical.width + 8, logical.height + 4)
