@@ -1271,8 +1271,9 @@ def create_pdf_catalog(filename: Path, records: list[FontRecord]) -> None:
             surface.show_page()
             y = 36
         ctx.set_source_rgb(0, 0, 0)
-        ctx.move_to(32, y + 10)
-        ctx.line_to(width - 32, y + 10)
+        ctx.set_line_width(1)
+        ctx.move_to(32, y + 10.5)
+        ctx.line_to(width - 32, y + 10.5)
         ctx.stroke()
         layout.set_text(family, -1)
         layout.set_font_description(Pango.FontDescription("Helvetica 14"))
@@ -1291,7 +1292,7 @@ def create_pdf_catalog(filename: Path, records: list[FontRecord]) -> None:
             ctx.set_source_rgb(0, 0, 0)
             draw_outline_text(ctx, record, SAMPLE_TEXT, 32, y + 18, 18, max_width=width - 64)
             y += 24
-            draw_text(f"{record.style} ({record.path})", "Monospace 7", 32, y)
+            draw_text(f"{record.style} ({record.path.name})", "Monospace 7", 32, y)
             y += 18
         y += 16
     surface.finish()
