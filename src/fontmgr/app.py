@@ -50,6 +50,36 @@ class FontRecord:
             return str(self.path)
 
 
+
+def css_quote(value: str) -> str:
+    """Escape a string for use as a quoted GTK CSS value."""
+
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def apply_css(widget: Gtk.Widget, css: str) -> None:
+    """Attach replacement CSS to a single widget without accumulating providers."""
+
+    context = widget.get_style_context()
+    previous = getattr(widget, "_fontmgr_css_provider", None)
+    if previous is not None:
+        context.remove_provider(previous)
+    provider = Gtk.CssProvider()
+    provider.load_from_data(css.encode())
+    context.add_provider(provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+    setattr(widget, "_fontmgr_css_provider", provider)
+
+
+def apply_font_css(widget: Gtk.Widget, family: str, size_pt: int) -> None:
+    """Apply per-widget font styling with GTK CSS instead of deprecated APIs."""
+
+    family = css_quote(family)
+    apply_css(
+        widget,
+        f'* {{ font-family: "{family}"; font-size: {size_pt}pt; }} '
+        f'text {{ font-family: "{family}"; font-size: {size_pt}pt; }}',
+    )
+
 def is_font_file(path: Path) -> bool:
     return path.is_file() and path.suffix.lower() in FONT_EXTENSIONS
 
@@ -156,7 +186,7 @@ class FontTile(Gtk.EventBox):
         name = Gtk.Label(label=record.name, xalign=0)
         preview = Gtk.Label(label=record.name, xalign=0)
         preview.set_ellipsize(Pango.EllipsizeMode.END)
-        preview.override_font(Pango.FontDescription(f"{record.family} 40"))
+        apply_font_css(preview, record.family, 40)
         box.pack_start(name, False, False, 0)
         box.pack_start(preview, True, True, 0)
         self.add(box)
@@ -173,27 +203,27 @@ class FontTile(Gtk.EventBox):
 
     def update_style(self) -> None:
         css = "background: #111; color: #fff; border: 1px solid #111;" if self.selected else "background: #fff; color: #111; border: 1px solid #999;"
-        provider = Gtk.CssProvider()
-        provider.load_from_data(f"eventbox {{ {css} }}".encode())
-        self.get_style_context().add_provider(provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        apply_css(self, f"eventbox {{ {css} }}")
 
 
 class FontPane(Gtk.Box):
     """Shared Browse Fonts/My Fonts layout."""
 
-    def __init__(self, app: "FontManagerWindow", mode: str):
+    def __init__(self, app: "FontManagerWindow", mode: str, autoload: bool = True):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin=16)
         self.app = app
         self.mode = mode
         self.records: list[FontRecord] = []
         self.selected_records: list[FontRecord] = []
+        self.loaded = False
         self.current_folder = Path.cwd()
         self.show_fonts = Gtk.RadioButton.new_with_label_from_widget(None, "Show fonts")
         self.show_files = Gtk.RadioButton.new_with_label_from_widget(self.show_fonts, "Show files")
         self.show_fonts.set_active(True)
         self.show_fonts.connect("toggled", lambda _b: self.refresh())
         self._build()
-        self.refresh()
+        if autoload:
+            self.refresh()
 
     def _build(self) -> None:
         top = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
@@ -301,7 +331,12 @@ class FontPane(Gtk.Box):
             self.current_scope = "group"
             self.refresh()
 
+    def ensure_loaded(self) -> None:
+        if not self.loaded:
+            self.refresh()
+
     def refresh(self) -> None:
+        self.loaded = True
         if self.show_fonts.get_active():
             self.stack.set_visible_child_name("fonts")
         else:
@@ -415,11 +450,15 @@ class FontManagerWindow(Gtk.ApplicationWindow):
         root.pack_start(self._toolbar(), False, False, 0)
         self.notebook = Gtk.Notebook()
         self.browse_pane = FontPane(self, "browse")
-        self.my_pane = FontPane(self, "my")
+        self.my_pane = FontPane(self, "my", autoload=False)
         self.notebook.append_page(self.browse_pane, Gtk.Label(label="Browse Fonts"))
         self.notebook.append_page(self.my_pane, Gtk.Label(label="My Fonts"))
+        self.notebook.connect("switch-page", self._tab_switched)
         root.pack_start(self.notebook, True, True, 0)
         self.show_all()
+
+    def _tab_switched(self, _notebook: Gtk.Notebook, _page: Gtk.Widget, page_num: int) -> None:
+        (self.browse_pane if page_num == 0 else self.my_pane).ensure_loaded()
 
     @property
     def active_pane(self) -> FontPane:
@@ -472,8 +511,11 @@ class FontManagerWindow(Gtk.ApplicationWindow):
         return self.active_pane.selected_records
 
     def refresh_all(self, *_args) -> None:
-        self.browse_pane.refresh()
-        self.my_pane.refresh()
+        self.active_pane.refresh()
+        if self.browse_pane.loaded and self.active_pane is not self.browse_pane:
+            self.browse_pane.refresh()
+        if self.my_pane.loaded and self.active_pane is not self.my_pane:
+            self.my_pane.refresh()
 
     def install_selected(self, *_args) -> None:
         USER_FONT_DIR.mkdir(parents=True, exist_ok=True)
@@ -581,7 +623,7 @@ class FontViewDialog(Gtk.Dialog):
         area.pack_start(details, False, False, 0)
         self.preview = Gtk.TextView(wrap_mode=Gtk.WrapMode.WORD_CHAR, margin=16)
         self.preview.get_buffer().set_text("The quick brown\nfox jumps over\nthe lazy dog")
-        self.preview.override_font(Pango.FontDescription(f"{record.family} 42"))
+        apply_font_css(self.preview, record.family, 42)
         scroll = Gtk.ScrolledWindow(min_content_height=240)
         scroll.add(self.preview)
         area.pack_start(scroll, True, True, 0)
@@ -597,7 +639,7 @@ class FontViewDialog(Gtk.Dialog):
 
     def _size_changed(self, combo: Gtk.ComboBoxText) -> None:
         size = combo.get_active_text() or "42"
-        self.preview.override_font(Pango.FontDescription(f"{self.record.family} {size}"))
+        apply_font_css(self.preview, self.record.family, int(size))
 
     def run_dialog(self) -> None:
         self.show_all()
