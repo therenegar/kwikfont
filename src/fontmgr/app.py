@@ -11,7 +11,6 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
-from xml.sax.saxutils import escape
 
 import cairo
 import gi
@@ -346,56 +345,6 @@ def glyph_advance(glyph_name: str | None, hmtx: dict, units_per_em: int) -> int:
     return int(units_per_em * 0.35 if glyph_name is None else units_per_em * 0.6)
 
 
-def create_outline_svg(record: FontRecord, text: str, width: int, height: int, font_size: int, fill: str = "#111111") -> str:
-    """Build an SVG preview whose glyphs are converted to path outlines."""
-
-    try:
-        from fontTools.pens.svgPathPen import SVGPathPen
-
-        _font, glyph_set, cmap, hmtx, units_per_em = load_outline_font(str(record.path))
-        scale = font_size / units_per_em
-        baseline = min(height - 8, int(height * 0.78))
-        x_units = 0
-        paths: list[str] = []
-        for character in text:
-            glyph_name = cmap.get(ord(character))
-            if glyph_name and glyph_name in glyph_set:
-                pen = SVGPathPen(glyph_set)
-                glyph_set[glyph_name].draw(pen)
-                commands = pen.getCommands()
-                if commands:
-                    paths.append(f'<path d="{commands}" transform="translate({x_units} 0)"/>')
-            x_units += glyph_advance(glyph_name, hmtx, units_per_em)
-        outlined = "".join(paths)
-        return (
-            f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">'
-            f'<defs><clipPath id="previewClip"><rect x="0" y="0" width="{width}" height="{height}"/></clipPath></defs>'
-            f'<g clip-path="url(#previewClip)" fill="{fill}" transform="translate(0 {baseline}) scale({scale} -{scale})">{outlined}</g>'
-            '</svg>'
-        )
-    except Exception:
-        safe_text = escape(text)
-        safe_family = escape(record.family, {'"': '&quot;'})
-        return (
-            f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">'
-            f'<text x="0" y="{height - 8}" font-family="{safe_family}" font-size="{font_size}" fill="{fill}">{safe_text}</text>'
-            '</svg>'
-        )
-
-
-def svg_to_pixbuf(svg: str, width: int, height: int) -> GdkPixbuf.Pixbuf | None:
-    """Render SVG bytes into a pixbuf for display in GTK widgets."""
-
-    try:
-        loader = GdkPixbuf.PixbufLoader.new_with_type("svg")
-        loader.set_size(width, height)
-        loader.write(svg.encode())
-        loader.close()
-        return loader.get_pixbuf()
-    except Exception:
-        return None
-
-
 class CairoOutlinePen:
     """fontTools pen that replays glyph contours into a Cairo context."""
 
@@ -462,6 +411,20 @@ def draw_outline_text(ctx: cairo.Context, record: FontRecord, text: str, x: floa
         pen_x += advance
 
 
+def create_outline_pixbuf(record: FontRecord, text: str, width: int, height: int, font_size: int, fill: tuple[float, float, float]) -> GdkPixbuf.Pixbuf | None:
+    """Render a font preview pixbuf using the same Cairo outlines as PDF output."""
+
+    surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, width, height)
+    ctx = cairo.Context(surface)
+    ctx.set_operator(cairo.OPERATOR_CLEAR)
+    ctx.paint()
+    ctx.set_operator(cairo.OPERATOR_OVER)
+    ctx.set_source_rgb(*fill)
+    draw_outline_text(ctx, record, text, 0, min(height - 8, int(height * 0.78)), font_size, max_width=width)
+    surface.flush()
+    return Gdk.pixbuf_get_from_surface(surface, 0, 0, width, height)
+
+
 class FontTile(Gtk.EventBox):
     """Selectable compact preview tile for a font."""
 
@@ -512,9 +475,8 @@ class FontTile(Gtk.EventBox):
         self.update_preview()
 
     def update_preview(self) -> None:
-        fill = "#0f3d91" if self.selected else "#111111"
-        svg = create_outline_svg(self.record, self.record.name, self.PREVIEW_WIDTH, self.PREVIEW_HEIGHT, 38, fill)
-        pixbuf = svg_to_pixbuf(svg, self.PREVIEW_WIDTH, self.PREVIEW_HEIGHT)
+        fill = (0.06, 0.24, 0.57) if self.selected else (0.07, 0.07, 0.07)
+        pixbuf = create_outline_pixbuf(self.record, self.record.name, self.PREVIEW_WIDTH, self.PREVIEW_HEIGHT, 38, fill)
         if pixbuf is not None:
             self.preview.set_from_pixbuf(pixbuf)
             self.preview_loaded = True

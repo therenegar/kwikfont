@@ -19,7 +19,7 @@ enBox Font Manager is a standalone GTK utility for browsing, previewing, install
 Install the native GTK/Python bindings supplied by your Linux distribution. On Debian or Ubuntu:
 
 ```bash
-sudo apt install python3-gi python3-gi-cairo gir1.2-gtk-3.0 gir1.2-gdkpixbuf-2.0 python3-cairo fontconfig librsvg2-common
+sudo apt install python3-gi python3-gi-cairo gir1.2-gtk-3.0 gir1.2-gdkpixbuf-2.0 python3-cairo fontconfig
 ```
 
 ## Run from source
