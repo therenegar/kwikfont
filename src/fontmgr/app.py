@@ -569,14 +569,11 @@ class FontPane(Gtk.Box):
         self.pack_start(buttons, False, False, 0)
 
     def _build_sidebar(self) -> Gtk.Widget:
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6, margin=12)
-        box.set_size_request(230, -1)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6, margin=8)
+        box.set_size_request(170, -1)
         if self.mode == "browse":
             box.pack_start(Gtk.Label(label="FOLDERS", xalign=0), False, False, 4)
-            chooser = Gtk.FileChooserWidget(action=Gtk.FileChooserAction.SELECT_FOLDER)
-            chooser.set_current_folder(str(Path.cwd()))
-            chooser.connect("selection-changed", self._folder_changed)
-            box.pack_start(chooser, True, True, 0)
+            box.pack_start(self._build_folder_tree(), True, True, 0)
         else:
             box.pack_start(Gtk.Label(label="MY INSTALLED FONTS", xalign=0), False, False, 4)
             for label, key in (("All fonts", "all"), ("User fonts", "user"), ("System fonts", "system")):
@@ -592,6 +589,85 @@ class FontPane(Gtk.Box):
             self._load_group_buttons()
         return box
 
+    def _build_folder_tree(self) -> Gtk.Widget:
+        self.folder_store = Gtk.TreeStore(str, str, bool)
+        self.folder_tree = Gtk.TreeView(model=self.folder_store, headers_visible=False)
+        renderer = Gtk.CellRendererText(ellipsize=Pango.EllipsizeMode.END)
+        column = Gtk.TreeViewColumn("Folder", renderer, text=0)
+        self.folder_tree.append_column(column)
+        root_iter = self.folder_store.append(None, ["/", "/", False])
+        self._add_folder_placeholder(root_iter)
+        self.folder_tree.connect("row-expanded", self._folder_row_expanded)
+        selection = self.folder_tree.get_selection()
+        selection.connect("changed", self._folder_selection_changed)
+        self.loading_folder_tree = True
+        self._select_folder_path(self.current_folder)
+        self.loading_folder_tree = False
+        scroll = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER, vscrollbar_policy=Gtk.PolicyType.AUTOMATIC)
+        scroll.add(self.folder_tree)
+        return scroll
+
+    def _add_folder_placeholder(self, parent_iter: Gtk.TreeIter) -> None:
+        self.folder_store.append(parent_iter, ["", "", True])
+
+    def _folder_row_expanded(self, _tree: Gtk.TreeView, tree_iter: Gtk.TreeIter, _path: Gtk.TreePath) -> None:
+        self._populate_folder_iter(tree_iter)
+
+    def _populate_folder_iter(self, tree_iter: Gtk.TreeIter) -> None:
+        if self.folder_store[tree_iter][2]:
+            return
+        while True:
+            child = self.folder_store.iter_children(tree_iter)
+            if child is None:
+                break
+            self.folder_store.remove(child)
+        folder = Path(self.folder_store[tree_iter][1])
+        for child_folder in self._child_folders(folder):
+            child_iter = self.folder_store.append(tree_iter, [child_folder.name or str(child_folder), str(child_folder), False])
+            self._add_folder_placeholder(child_iter)
+        self.folder_store[tree_iter][2] = True
+
+    @staticmethod
+    def _child_folders(folder: Path) -> list[Path]:
+        try:
+            return sorted((child for child in folder.iterdir() if child.is_dir()), key=lambda child: child.name.casefold())
+        except OSError:
+            return []
+
+    def _find_child_folder_iter(self, parent_iter: Gtk.TreeIter, folder: Path) -> Gtk.TreeIter | None:
+        child = self.folder_store.iter_children(parent_iter)
+        folder_text = str(folder)
+        while child is not None:
+            if self.folder_store[child][1] == folder_text:
+                return child
+            child = self.folder_store.iter_next(child)
+        return None
+
+    def _select_folder_path(self, folder: Path) -> None:
+        try:
+            folder = folder.resolve()
+        except OSError:
+            folder = Path.cwd()
+        root_iter = self.folder_store.get_iter_first()
+        if root_iter is None:
+            return
+        current_iter = root_iter
+        self._populate_folder_iter(current_iter)
+        self.folder_tree.expand_row(self.folder_store.get_path(current_iter), False)
+        for index in range(1, len(folder.parts) + 1):
+            part_path = Path(*folder.parts[:index])
+            if part_path == Path("/"):
+                continue
+            next_iter = self._find_child_folder_iter(current_iter, part_path)
+            if next_iter is None:
+                break
+            current_iter = next_iter
+            self._populate_folder_iter(current_iter)
+            self.folder_tree.expand_row(self.folder_store.get_path(current_iter), False)
+        tree_path = self.folder_store.get_path(current_iter)
+        self.folder_tree.get_selection().select_path(tree_path)
+        self.folder_tree.scroll_to_cell(tree_path, None, True, 0.5, 0.0)
+
     def _load_group_buttons(self) -> None:
         if not hasattr(self, "groups_box"):
             return
@@ -604,11 +680,15 @@ class FontPane(Gtk.Box):
             self.groups_box.pack_start(button, False, False, 0)
         self.groups_box.show_all()
 
-    def _folder_changed(self, chooser: Gtk.FileChooserWidget) -> None:
-        filename = chooser.get_filename()
-        if filename:
-            self.current_folder = Path(filename)
-            self.refresh()
+    def _folder_selection_changed(self, selection: Gtk.TreeSelection) -> None:
+        model, tree_iter = selection.get_selected()
+        if tree_iter is None:
+            return
+        folder = model[tree_iter][1]
+        if folder:
+            self.current_folder = Path(folder)
+            if not getattr(self, "loading_folder_tree", False):
+                self.refresh()
 
     def _my_scope_changed(self, button: Gtk.RadioButton, key: str) -> None:
         if button.get_active():
