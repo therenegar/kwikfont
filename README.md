@@ -46,4 +46,4 @@ enbox-font-manager
 - User font operations write to `~/.fonts`.
 - System fonts are listed from `/usr/share/fonts`; uninstalling system fonts is intentionally skipped to avoid requiring elevated privileges or deleting distribution-managed files.
 - Font previews and PDF specimens use `fonttools` to convert font glyphs into outlines so they do not depend on the font already being installed.
-- The metadata parser is intentionally best-effort and derives family/style names from filenames so the app remains lightweight and self-contained.
+- Font family, style, and display names are read from OpenType/TrueType/Type 1 metadata, with filename parsing used only as a fallback for malformed or unsupported files.

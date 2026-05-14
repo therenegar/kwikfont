@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import re
 import shutil
 import subprocess
 from functools import lru_cache
@@ -53,6 +54,14 @@ class FontRecord:
             return str(self.path)
 
 
+@dataclass(frozen=True)
+class FontIdentity:
+    """Names read from a font file's own metadata."""
+
+    family: str
+    name: str
+    style: str
+
 
 def css_quote(value: str) -> str:
     """Escape a string for use as a quoted GTK CSS value."""
@@ -87,7 +96,7 @@ def is_font_file(path: Path) -> bool:
     return path.is_file() and path.suffix.lower() in FONT_EXTENSIONS
 
 
-def file_kind(path: Path) -> str:
+def extension_file_kind(path: Path) -> str:
     return {
         ".ttf": "TrueType",
         ".ttc": "TrueType Collection",
@@ -100,8 +109,129 @@ def file_kind(path: Path) -> str:
     }.get(path.suffix.lower(), path.suffix.upper().lstrip("."))
 
 
-def font_identity(path: Path) -> tuple[str, str, str]:
-    """Best-effort family/name/style extraction from a font file name."""
+def file_kind(path: Path) -> str:
+    """Determine font technology from the font file itself when possible."""
+
+    if path.suffix.lower() in {".pfb", ".pfa"}:
+        return "PostScript Type 1"
+    try:
+        from fontTools.ttLib import TTCollection, TTFont
+
+        if path.suffix.lower() in {".ttc", ".otc"}:
+            collection = TTCollection(str(path))
+            font = collection.fonts[0]
+            collection_suffix = " Collection"
+        else:
+            font = TTFont(str(path), lazy=True)
+            collection_suffix = ""
+        if getattr(font, "flavor", None) == "woff":
+            return "Web Open Font"
+        if getattr(font, "flavor", None) == "woff2":
+            return "Web Open Font 2"
+        if "CFF " in font or "CFF2" in font:
+            return f"OpenType/CFF{collection_suffix}"
+        if "glyf" in font:
+            return f"TrueType{collection_suffix}"
+        return f"OpenType{collection_suffix}"
+    except Exception:
+        return extension_file_kind(path)
+
+
+def clean_font_name(value: str | None) -> str | None:
+    """Normalize a raw name-table or Type 1 metadata string."""
+
+    if value is None:
+        return None
+    cleaned = " ".join(value.replace("\x00", " ").strip().split())
+    if not cleaned or set(cleaned) <= {"-"}:
+        return None
+    return cleaned
+
+
+def select_name_record(names: list[str | None]) -> str | None:
+    """Return the first usable font metadata name from a priority-ordered list."""
+
+    for name in names:
+        cleaned = clean_font_name(name)
+        if cleaned:
+            return cleaned
+    return None
+
+
+def opentype_name(font, *name_ids: int) -> str | None:
+    """Read a preferred English Unicode name from an OpenType/TrueType name table."""
+
+    if "name" not in font:
+        return None
+    name_table = font["name"]
+    records = [record for record in name_table.names if record.nameID in name_ids]
+    english_records = [
+        record
+        for record in records
+        if (record.platformID == 3 and record.langID in {0x0409, 0}) or (record.platformID == 1 and record.langID == 0)
+    ]
+    unicode_records = [record for record in records if record.isUnicode()]
+    for record in english_records + unicode_records + records:
+        try:
+            cleaned = clean_font_name(record.toUnicode())
+        except Exception:
+            cleaned = clean_font_name(str(record))
+        if cleaned:
+            return cleaned
+    return None
+
+
+def opentype_identity(path: Path) -> FontIdentity:
+    """Read font names from OpenType/TrueType metadata."""
+
+    from fontTools.ttLib import TTCollection, TTFont
+
+    if path.suffix.lower() in {".ttc", ".otc"}:
+        collection = TTCollection(str(path))
+        font = collection.fonts[0]
+    else:
+        font = TTFont(str(path), lazy=True)
+    family = opentype_name(font, 16, 1)
+    style = opentype_name(font, 17, 2) or "Regular"
+    full_name = opentype_name(font, 4)
+    postscript_name = opentype_name(font, 6)
+    name = select_name_record([full_name, postscript_name, f"{family} {style}" if family else None, family, path.stem])
+    family = select_name_record([family, name, path.stem]) or path.stem
+    style = select_name_record([style, "Regular"]) or "Regular"
+    name = name or family
+    return FontIdentity(family=family, name=name, style=style)
+
+
+def parse_type1_string_metadata(text: str, key: str) -> str | None:
+    """Extract a simple Type 1 dictionary value."""
+
+    patterns = [
+        rf"/{re.escape(key)}\s*\((.*?)\)",
+        rf"/{re.escape(key)}\s*/([^\s{{}}\[\]()/]+)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.DOTALL)
+        if match:
+            return clean_font_name(match.group(1).replace("\\(", "(").replace("\\)", ")"))
+    return None
+
+
+def type1_identity(path: Path) -> FontIdentity:
+    """Read names from Type 1 font dictionaries."""
+
+    text = path.read_bytes()[:262_144].decode("latin-1", errors="ignore")
+    family = parse_type1_string_metadata(text, "FamilyName")
+    style = parse_type1_string_metadata(text, "Weight") or "Regular"
+    full_name = parse_type1_string_metadata(text, "FullName")
+    font_name = parse_type1_string_metadata(text, "FontName")
+    name = select_name_record([full_name, font_name, f"{family} {style}" if family else None, path.stem])
+    family = select_name_record([family, name, path.stem]) or path.stem
+    style = select_name_record([style, "Regular"]) or "Regular"
+    return FontIdentity(family=family, name=name or family, style=style)
+
+
+def filename_identity(path: Path) -> FontIdentity:
+    """Fallback identity when a file cannot be parsed as a supported font."""
 
     stem = path.stem.replace("_", " ")
     parts = stem.replace("-", " ").split()
@@ -132,7 +262,18 @@ def font_identity(path: Path) -> tuple[str, str, str]:
         family = " ".join(parts[:-1]) or stem
     else:
         family = " ".join(parts) or stem
-    return family, stem, style
+    return FontIdentity(family=family, name=stem, style=style)
+
+
+def font_identity(path: Path) -> FontIdentity:
+    """Read font identity from OpenType/TrueType/Type 1 metadata."""
+
+    try:
+        if path.suffix.lower() in {".pfb", ".pfa"}:
+            return type1_identity(path)
+        return opentype_identity(path)
+    except Exception:
+        return filename_identity(path)
 
 
 def discover_fonts(folder: Path, recursive: bool = False) -> list[FontRecord]:
@@ -140,7 +281,7 @@ def discover_fonts(folder: Path, recursive: bool = False) -> list[FontRecord]:
     paths = folder.rglob("*") if recursive else folder.iterdir() if folder.exists() else []
     records: list[FontRecord] = []
     for path in sorted((p for p in paths if is_font_file(p)), key=lambda p: p.name.lower()):
-        family, name, style = font_identity(path)
+        identity = font_identity(path)
         stat = path.stat()
         scope = None
         try:
@@ -155,9 +296,9 @@ def discover_fonts(folder: Path, recursive: bool = False) -> list[FontRecord]:
         records.append(
             FontRecord(
                 path=path,
-                name=name,
-                family=family,
-                style=style,
+                name=identity.name,
+                family=identity.family,
+                style=identity.style,
                 kind=file_kind(path),
                 size=stat.st_size,
                 modified=dt.datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d"),
