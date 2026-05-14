@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "enbox-font-manager"
+version = "0.1.0"
+description = "A GTK font browser, viewer, installer, and font catalog generator for Linux."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "enBox" }]
+keywords = ["gtk", "fonts", "linux", "font-manager"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: X11 Applications :: GTK",
+  "Intended Audience :: End Users/Desktop",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Topic :: Desktop Environment",
+]
+
+dependencies = [
+  "PyGObject>=3.42",
+  "pycairo>=1.20",
+]
+
+[project.scripts]
+enbox-font-manager = "fontmgr.app:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
