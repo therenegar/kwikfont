@@ -3,13 +3,13 @@ requires = ["setuptools>=69", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "Kwik Font"
+name = "kwik-font"
 version = "0.1.0"
 description = "A GTK font browser, viewer, installer, and font catalog generator for Linux."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-authors = [{ name = "Ben Renegar" }]
+authors = [{ name = "Kwik Font" }]
 keywords = ["gtk", "fonts", "linux", "font-manager"]
 classifiers = [
   "Development Status :: 3 - Alpha",
@@ -28,7 +28,7 @@ dependencies = [
 ]
 
 [project.scripts]
-enbox-font-manager = "fontmgr.app:main"
+kwik-font = "fontmgr.app:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
