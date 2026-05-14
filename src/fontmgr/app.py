@@ -515,8 +515,11 @@ class FontPane(Gtk.Box):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin=16)
         self.app = app
         self.mode = mode
+        self.all_records: list[FontRecord] = []
         self.records: list[FontRecord] = []
         self.selected_records: list[FontRecord] = []
+        self.search_query = ""
+        self.recent_folders: list[Path] = []
         self.loaded = False
         self.lazy_preview_source_id = 0
         self.current_folder = Path.cwd()
@@ -532,6 +535,7 @@ class FontPane(Gtk.Box):
         top = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         heading = Gtk.Label(label="Browse Fonts" if self.mode == "browse" else "My Fonts", xalign=0)
         heading.get_style_context().add_class("title-1")
+        apply_css(heading, "label { font-size: 28pt; }")
         top.pack_start(heading, True, True, 0)
         top.pack_start(self.show_fonts, False, False, 8)
         top.pack_start(self.show_files, False, False, 0)
@@ -580,8 +584,12 @@ class FontPane(Gtk.Box):
                 button.connect("clicked", cb)
                 buttons.pack_start(button, False, False, 0)
         else:
-            recent = Gtk.Button(label="Recent folders ▾")
-            buttons.pack_start(recent, False, False, 0)
+            self.recent_button = Gtk.MenuButton()
+            self.recent_button.set_label("Recent folders")
+            self.recent_menu = Gtk.Menu()
+            self.recent_button.set_popup(self.recent_menu)
+            self._refresh_recent_menu()
+            buttons.pack_start(self.recent_button, False, False, 0)
         self.pack_start(buttons, False, False, 0)
 
     def _build_sidebar(self) -> Gtk.Widget:
@@ -704,7 +712,40 @@ class FontPane(Gtk.Box):
         if folder:
             self.current_folder = Path(folder)
             if not getattr(self, "loading_folder_tree", False):
+                self.add_recent_folder(self.current_folder)
                 self.refresh()
+
+    def add_recent_folder(self, folder: Path) -> None:
+        if self.mode != "browse":
+            return
+        try:
+            folder = folder.resolve()
+        except OSError:
+            pass
+        self.recent_folders = [existing for existing in self.recent_folders if existing != folder]
+        self.recent_folders.insert(0, folder)
+        del self.recent_folders[10:]
+        self._refresh_recent_menu()
+
+    def _refresh_recent_menu(self) -> None:
+        if not hasattr(self, "recent_menu"):
+            return
+        for child in self.recent_menu.get_children():
+            self.recent_menu.remove(child)
+        if not self.recent_folders:
+            item = Gtk.MenuItem(label="No recent folders")
+            item.set_sensitive(False)
+            self.recent_menu.append(item)
+        else:
+            for folder in self.recent_folders:
+                item = Gtk.MenuItem(label=str(folder))
+                item.connect("activate", self._recent_folder_selected, folder)
+                self.recent_menu.append(item)
+        self.recent_menu.show_all()
+
+    def _recent_folder_selected(self, _item: Gtk.MenuItem, folder: Path) -> None:
+        self.add_recent_folder(folder)
+        self._select_folder_path(folder)
 
     def _my_scope_changed(self, button: Gtk.RadioButton, key: str) -> None:
         if button.get_active():
@@ -729,19 +770,33 @@ class FontPane(Gtk.Box):
         else:
             self.stack.set_visible_child_name("files")
         if self.mode == "browse":
-            self.records = discover_fonts(self.current_folder, recursive=True)
+            self.all_records = discover_fonts(self.current_folder, recursive=True)
         else:
             scope = getattr(self, "current_scope", "all")
             group = getattr(self, "current_group", None)
             if scope == "group" and group:
-                self.records = discover_fonts(group)
+                self.all_records = discover_fonts(group)
             elif scope in {"user", "system"}:
-                self.records = discover_installed_fonts(scope)
+                self.all_records = discover_installed_fonts(scope)
             else:
-                self.records = discover_installed_fonts("all")
-        self.selected_records = []
+                self.all_records = discover_installed_fonts("all")
+        self.apply_filter()
+
+    def apply_filter(self) -> None:
+        query = self.search_query.casefold().strip()
+        if query:
+            self.records = [record for record in self.all_records if self._record_matches(record, query)]
+        else:
+            self.records = list(self.all_records)
+        self.selected_records = [record for record in self.selected_records if record in self.records]
         self._populate_fonts()
         self._populate_files()
+        self._sync_tile_selection()
+
+    @staticmethod
+    def _record_matches(record: FontRecord, query: str) -> bool:
+        fields = (record.name, record.family, record.style, record.kind, str(record.path))
+        return any(query in field.casefold() for field in fields)
 
     def _populate_fonts(self) -> None:
         for child in self.flowbox.get_children():
@@ -823,11 +878,8 @@ class FontPane(Gtk.Box):
                 tile.set_selected(tile.record in self.selected_records)
 
     def find(self, query: str) -> None:
-        query = query.casefold()
-        matches = [r for r in self.records if query in r.name.casefold() or query in r.family.casefold()]
-        if matches:
-            self.selected_records = [matches[0]]
-            self._sync_tile_selection()
+        self.search_query = query
+        self.apply_filter()
 
     def new_group(self, _button=None) -> None:
         dialog = Gtk.Dialog(title="New font group", transient_for=self.app, flags=Gtk.DialogFlags.MODAL)
@@ -875,7 +927,9 @@ class FontManagerWindow(Gtk.ApplicationWindow):
         self.show_all()
 
     def _tab_switched(self, _notebook: Gtk.Notebook, _page: Gtk.Widget, page_num: int) -> None:
-        (self.browse_pane if page_num == 0 else self.my_pane).ensure_loaded()
+        pane = self.browse_pane if page_num == 0 else self.my_pane
+        pane.ensure_loaded()
+        pane.find(self.search_entry.get_text())
 
     @property
     def active_pane(self) -> FontPane:
@@ -919,6 +973,7 @@ class FontManagerWindow(Gtk.ApplicationWindow):
         toolbar.insert(spacer, -1)
         search_item = Gtk.ToolItem()
         self.search_entry = Gtk.SearchEntry(placeholder_text="Search")
+        self.search_entry.connect("search-changed", lambda entry: self.active_pane.find(entry.get_text()))
         self.search_entry.connect("activate", lambda entry: self.active_pane.find(entry.get_text()))
         search_item.add(self.search_entry)
         toolbar.insert(search_item, -1)
@@ -1001,7 +1056,9 @@ class FontManagerWindow(Gtk.ApplicationWindow):
         dialog.get_content_area().pack_start(entry, True, True, 12)
         dialog.show_all()
         if dialog.run() == Gtk.ResponseType.OK:
-            self.active_pane.find(entry.get_text())
+            query = entry.get_text()
+            self.search_entry.set_text(query)
+            self.active_pane.find(query)
         dialog.destroy()
 
     def print_listing(self, *_args) -> None:
