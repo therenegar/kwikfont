@@ -582,6 +582,8 @@ class FontPane(Gtk.Box):
             ):
                 button = Gtk.Button(label=label)
                 button.connect("clicked", cb)
+                if label == "Uninstall Font":
+                    self.app.uninstall_actions.append(button)
                 buttons.pack_start(button, False, False, 0)
         else:
             self.recent_button = Gtk.MenuButton()
@@ -592,6 +594,7 @@ class FontPane(Gtk.Box):
             buttons.pack_start(self.recent_button, False, False, 0)
             install_button = Gtk.Button(label="Install Font")
             install_button.connect("clicked", lambda _button: self.app.install_selected())
+            self.app.install_actions.append(install_button)
             buttons.pack_start(install_button, False, False, 0)
         self.pack_start(buttons, False, False, 0)
 
@@ -772,18 +775,22 @@ class FontPane(Gtk.Box):
             self.stack.set_visible_child_name("fonts")
         else:
             self.stack.set_visible_child_name("files")
-        if self.mode == "browse":
-            self.all_records = discover_fonts(self.current_folder, recursive=True)
-        else:
-            scope = getattr(self, "current_scope", "all")
-            group = getattr(self, "current_group", None)
-            if scope == "group" and group:
-                self.all_records = discover_fonts(group)
-            elif scope in {"user", "system"}:
-                self.all_records = discover_installed_fonts(scope)
+        self.app.begin_loading(self)
+        try:
+            if self.mode == "browse":
+                self.all_records = discover_fonts(self.current_folder, recursive=True)
             else:
-                self.all_records = discover_installed_fonts("all")
-        self.apply_filter()
+                scope = getattr(self, "current_scope", "all")
+                group = getattr(self, "current_group", None)
+                if scope == "group" and group:
+                    self.all_records = discover_fonts(group)
+                elif scope in {"user", "system"}:
+                    self.all_records = discover_installed_fonts(scope)
+                else:
+                    self.all_records = discover_installed_fonts("all")
+            self.apply_filter()
+        finally:
+            self.app.end_loading(self)
 
     def apply_filter(self) -> None:
         query = self.search_query.casefold().strip()
@@ -924,8 +931,14 @@ class FontManagerWindow(Gtk.ApplicationWindow):
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self.add(root)
         self.status_message = "Ready"
+        self.install_actions: list[Gtk.Widget] = []
+        self.uninstall_actions: list[Gtk.Widget] = []
         self.statusbar = Gtk.Statusbar()
         self.status_context_id = self.statusbar.get_context_id("fontmgr")
+        self.loading_spinner = Gtk.Spinner()
+        self.status_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self.status_box.pack_start(self.loading_spinner, False, False, 6)
+        self.status_box.pack_start(self.statusbar, True, True, 0)
         root.pack_start(self._menu_bar(), False, False, 0)
         root.pack_start(self._toolbar(), False, False, 0)
         self.notebook = Gtk.Notebook()
@@ -935,7 +948,7 @@ class FontManagerWindow(Gtk.ApplicationWindow):
         self.notebook.append_page(self.my_pane, Gtk.Label(label="My Fonts"))
         self.notebook.connect("switch-page", self._tab_switched)
         root.pack_start(self.notebook, True, True, 0)
-        root.pack_start(self.statusbar, False, False, 0)
+        root.pack_start(self.status_box, False, False, 0)
         self.update_status_for_pane(self.browse_pane)
         self.show_all()
 
@@ -957,14 +970,36 @@ class FontManagerWindow(Gtk.ApplicationWindow):
         text = f"Fonts: {len(pane.records)}    Selected: {len(pane.selected_records)}    {self.status_message}"
         self.statusbar.pop(self.status_context_id)
         self.statusbar.push(self.status_context_id, text)
+        self.update_action_sensitivity(pane)
+
+    def update_action_sensitivity(self, pane: FontPane | None = None) -> None:
+        pane = pane or self.active_pane
+        selected = pane.selected_records
+        can_install = bool(selected)
+        can_uninstall = any(record.installed_scope == "user" for record in selected)
+        for action in self.install_actions:
+            action.set_sensitive(can_install)
+        for action in self.uninstall_actions:
+            action.set_sensitive(can_uninstall)
 
     def update_status(self, message: str | None = None) -> None:
         self.update_status_for_pane(self.active_pane, message)
 
+    def begin_loading(self, pane: FontPane) -> None:
+        if hasattr(self, "loading_spinner"):
+            self.loading_spinner.start()
+        self.update_status_for_pane(pane, "Loading fonts…")
+        self._drain_events()
+
+    def end_loading(self, pane: FontPane) -> None:
+        if hasattr(self, "loading_spinner"):
+            self.loading_spinner.stop()
+        self.update_status_for_pane(pane, "Ready")
+
     def _menu_bar(self) -> Gtk.MenuBar:
         menubar = Gtk.MenuBar()
         menus = {
-            "File": [("Install", self.install_selected), ("Uninstall", self.uninstall_selected), ("Print Listing", self.print_listing), ("Exit", lambda *_: self.close())],
+            "File": [("Install", self.install_selected), ("Uninstall", self.uninstall_selected), ("Refresh cache", self.refresh_cache), ("Print Listing", self.print_listing), ("Exit", lambda *_: self.close())],
             "Edit": [("Select All", lambda *_: self.active_pane.select_all()), ("Invert Selection", lambda *_: self.active_pane.invert_selection()), ("Find Font", self.find_font)],
             "View": [("View Font", self.view_font), ("Refresh Font List", self.refresh_all)],
             "Help": [("About", self.about)],
@@ -975,6 +1010,10 @@ class FontManagerWindow(Gtk.ApplicationWindow):
             for label, callback in items:
                 child = Gtk.MenuItem(label=label)
                 child.connect("activate", callback)
+                if label == "Install":
+                    self.install_actions.append(child)
+                elif label == "Uninstall":
+                    self.uninstall_actions.append(child)
                 menu.append(child)
             item.set_submenu(menu)
             menubar.append(item)
@@ -992,6 +1031,10 @@ class FontManagerWindow(Gtk.ApplicationWindow):
         for icon, label, callback in actions:
             button = Gtk.ToolButton.new(Gtk.Image.new_from_icon_name(icon, Gtk.IconSize.LARGE_TOOLBAR), label)
             button.connect("clicked", callback)
+            if label == "Install Font":
+                self.install_actions.append(button)
+            elif label == "Uninstall Font":
+                self.uninstall_actions.append(button)
             toolbar.insert(button, -1)
         spacer = Gtk.SeparatorToolItem()
         spacer.set_expand(True)
@@ -1023,7 +1066,6 @@ class FontManagerWindow(Gtk.ApplicationWindow):
         USER_FONT_DIR.mkdir(parents=True, exist_ok=True)
         for record in records:
             shutil.copy2(record.path, USER_FONT_DIR / record.path.name)
-        self._fc_cache()
         self.refresh_all()
         self.update_status("Font installed" if len(records) == 1 else f"{len(records)} fonts installed")
 
@@ -1036,7 +1078,6 @@ class FontManagerWindow(Gtk.ApplicationWindow):
                 continue
             record.path.unlink(missing_ok=True)
             deleted += 1
-        self._fc_cache()
         self.refresh_all()
         if deleted:
             self.update_status("Font uninstalled" if deleted == 1 else f"{deleted} fonts uninstalled")
@@ -1070,7 +1111,6 @@ class FontManagerWindow(Gtk.ApplicationWindow):
                     shutil.copy2(record.path, destination)
                 else:
                     shutil.move(str(record.path), destination)
-            self._fc_cache()
             self.refresh_all()
             self.update_status("Font added to group" if len(records) == 1 else f"{len(records)} fonts added to group")
         dialog.destroy()
@@ -1082,7 +1122,6 @@ class FontManagerWindow(Gtk.ApplicationWindow):
             if record.path.parent != USER_FONT_DIR:
                 shutil.move(str(record.path), USER_FONT_DIR / record.path.name)
                 moved += 1
-        self._fc_cache()
         self.refresh_all()
         if moved:
             self.update_status("Font removed from group" if moved == 1 else f"{moved} fonts removed from group")
@@ -1127,9 +1166,20 @@ class FontManagerWindow(Gtk.ApplicationWindow):
         dialog.destroy()
 
     @staticmethod
+    def _drain_events() -> None:
+        while Gtk.events_pending():
+            Gtk.main_iteration_do(False)
+
+    def refresh_cache(self, *_args) -> None:
+        self.update_status("Refreshing font cache…")
+        self._drain_events()
+        self._fc_cache()
+        self.update_status("Font cache refreshed")
+
+    @staticmethod
     def _fc_cache() -> None:
         try:
-            subprocess.run(["fc-cache", "-f", str(USER_FONT_DIR)], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(["fc-cache", "-f", "-v"], check=False)
         except FileNotFoundError:
             pass
 
@@ -1144,12 +1194,17 @@ class FontViewDialog(Gtk.Dialog):
         self.record = record
         self.add_buttons(Gtk.STOCK_CLOSE, Gtk.ResponseType.CLOSE)
         self.set_default_size(720, 560)
+        self.set_resizable(False)
         area = self.get_content_area()
         details = Gtk.Grid(column_spacing=24, row_spacing=8, margin=16)
         rows = [("Font name", record.name), ("File name", str(record.path)), ("Font type", record.kind), ("Installation status", "This font is currently installed." if record.installed else "This font is not currently installed.")]
         for row, (label, value) in enumerate(rows):
             details.attach(Gtk.Label(label=label, xalign=0), 0, row, 1, 1)
-            details.attach(Gtk.Label(label=value, xalign=0), 1, row, 1, 1)
+            value_label = Gtk.Label(label=value, xalign=0)
+            value_label.set_line_wrap(True)
+            value_label.set_line_wrap_mode(Pango.WrapMode.WORD_CHAR)
+            value_label.set_max_width_chars(70)
+            details.attach(value_label, 1, row, 1, 1)
         area.pack_start(details, False, False, 0)
 
         preview_frame = Gtk.EventBox(margin_left=16, margin_right=16, margin_top=8, margin_bottom=8)
@@ -1169,17 +1224,17 @@ class FontViewDialog(Gtk.Dialog):
 
         size_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8, margin=16)
         size_box.pack_start(Gtk.Label(label="Font size:"), False, False, 0)
-        self.size_combo = Gtk.ComboBoxText()
-        for size in range(8, 73, 2):
-            self.size_combo.append_text(str(size))
-        self.size_combo.set_active((42 - 8) // 2)
-        self.size_combo.connect("changed", lambda _combo: self.update_preview())
-        size_box.pack_start(self.size_combo, False, False, 0)
+        self.size_scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 8, 72, 1)
+        self.size_scale.set_value(42)
+        self.size_scale.set_digits(0)
+        self.size_scale.set_hexpand(True)
+        self.size_scale.connect("value-changed", lambda _scale: self.update_preview())
+        size_box.pack_start(self.size_scale, True, True, 0)
         area.pack_start(size_box, False, False, 0)
         self.update_preview()
 
     def update_preview(self) -> None:
-        size = int(self.size_combo.get_active_text() or "42")
+        size = int(self.size_scale.get_value())
         text = self.preview_entry.get_text() or self.DEFAULT_PREVIEW_TEXT
         pixbuf = create_wrapped_outline_pixbuf(self.record, text, self.PREVIEW_WIDTH, self.PREVIEW_HEIGHT, size, (0.0, 0.0, 0.0))
         if pixbuf is not None:
@@ -1214,10 +1269,19 @@ def create_pdf_catalog(filename: Path, records: list[FontRecord]) -> None:
         if y > height - 120:
             surface.show_page()
             y = 36
-        draw_text(family, "Sans 14", 32, y)
-        ctx.move_to(120, y + 10)
+        ctx.set_source_rgb(0, 0, 0)
+        ctx.move_to(32, y + 10)
         ctx.line_to(width - 32, y + 10)
         ctx.stroke()
+        layout.set_text(family, -1)
+        layout.set_font_description(Pango.FontDescription("Sans 14"))
+        _ink, logical = layout.get_pixel_extents()
+        ctx.set_source_rgb(1, 1, 1)
+        ctx.rectangle(28, y - 2, logical.width + 8, logical.height + 4)
+        ctx.fill()
+        ctx.set_source_rgb(0, 0, 0)
+        ctx.move_to(32, y)
+        PangoCairo.show_layout(ctx, layout)
         y += 24
         for record in family_records:
             if y > height - 80:
