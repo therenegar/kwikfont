@@ -470,6 +470,7 @@ class FontTile(Gtk.EventBox):
         name = Gtk.Label(label=record.name, xalign=0)
         name.set_halign(Gtk.Align.START)
         name.set_ellipsize(Pango.EllipsizeMode.END)
+        name.set_width_chars(1)
         self.preview = Gtk.Image()
         self.preview.set_halign(Gtk.Align.START)
         self.preview.set_size_request(self.PREVIEW_WIDTH, self.PREVIEW_HEIGHT)
