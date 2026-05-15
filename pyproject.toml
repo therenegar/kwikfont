@@ -28,7 +28,7 @@ dependencies = [
 ]
 
 [project.scripts]
-kwik-font = "fontmgr.app:main"
+kwik-font = "kwikfont.app:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
