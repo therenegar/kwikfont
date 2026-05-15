@@ -448,8 +448,8 @@ class FontTile(Gtk.EventBox):
 
     WIDTH = 240
     HEIGHT = 96
-    MARGIN = 8
-    PREVIEW_WIDTH = WIDTH - (MARGIN * 2)
+    PADDING = 8
+    PREVIEW_WIDTH = WIDTH - (PADDING * 2)
     PREVIEW_HEIGHT = 50
 
     def __init__(self, record: FontRecord, on_select, on_open):
@@ -464,22 +464,38 @@ class FontTile(Gtk.EventBox):
         self.set_valign(Gtk.Align.START)
         self.set_hexpand(False)
         self.set_vexpand(False)
-        self.style_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, margin=self.MARGIN)
-        self.style_box.set_size_request(self.PREVIEW_WIDTH, self.HEIGHT - (self.MARGIN * 2))
+        self.style_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.style_box.set_size_request(self.WIDTH, self.HEIGHT)
         self.style_box.get_style_context().add_class("font-tile")
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, margin=self.PADDING)
         name = Gtk.Label(label=record.name, xalign=0)
         name.set_halign(Gtk.Align.START)
         name.set_ellipsize(Pango.EllipsizeMode.END)
         name.set_width_chars(1)
+        name.set_max_width_chars(1)
+        name.set_size_request(self.PREVIEW_WIDTH, -1)
         self.preview = Gtk.Image()
         self.preview.set_halign(Gtk.Align.START)
         self.preview.set_size_request(self.PREVIEW_WIDTH, self.PREVIEW_HEIGHT)
-        self.style_box.pack_start(name, False, False, 0)
-        self.style_box.pack_start(self.preview, False, False, 0)
+        content.pack_start(name, False, False, 0)
+        content.pack_start(self.preview, False, False, 0)
+        self.style_box.pack_start(content, True, True, 0)
         self.add(self.style_box)
         self.connect("button-press-event", self._clicked)
         self.preview_loaded = False
         self.update_style()
+
+    def do_get_preferred_width(self):
+        return self.WIDTH, self.WIDTH
+
+    def do_get_preferred_height(self):
+        return self.HEIGHT, self.HEIGHT
+
+    def do_get_preferred_width_for_height(self, _height):
+        return self.WIDTH, self.WIDTH
+
+    def do_get_preferred_height_for_width(self, _width):
+        return self.HEIGHT, self.HEIGHT
 
     def _clicked(self, _widget, event):
         if event.type == Gdk.EventType._2BUTTON_PRESS:
@@ -515,7 +531,7 @@ class FontTile(Gtk.EventBox):
             if self.selected
             else "background-color: #ffffff; color: #111111; border: 1px solid #111111;"
         )
-        apply_css(self.style_box, f".font-tile {{ {css} }} .font-tile * {{ color: inherit; }}")
+        apply_css(self.style_box, f".font-tile {{ {css} margin: 0; }} .font-tile * {{ color: inherit; }}")
 
 
 class FontPane(Gtk.Box):
@@ -558,7 +574,10 @@ class FontPane(Gtk.Box):
         self.stack = Gtk.Stack()
         self.flowbox = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, min_children_per_line=1, max_children_per_line=100)
         self.flowbox.set_homogeneous(False)
+        self.flowbox.set_column_spacing(0)
+        self.flowbox.set_row_spacing(0)
         self.flowbox.set_valign(Gtk.Align.START)
+        apply_css(self.flowbox, "flowbox { margin: 0; padding: 0; } flowboxchild { margin: 0; padding: 0; }")
         self.flow_scroll = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER, vscrollbar_policy=Gtk.PolicyType.AUTOMATIC)
         self.flow_scroll.add(self.flowbox)
         self.flow_scroll.connect("size-allocate", lambda *_args: self.queue_visible_preview_update())
@@ -829,6 +848,16 @@ class FontPane(Gtk.Box):
             self.flowbox.remove(child)
         for record in self.records:
             self.flowbox.add(FontTile(record, self._tile_selected, self.app.open_font_record))
+        for child in self.flowbox.get_children():
+            child.set_size_request(FontTile.WIDTH, FontTile.HEIGHT)
+            child.set_halign(Gtk.Align.START)
+            child.set_valign(Gtk.Align.START)
+            child.set_hexpand(False)
+            child.set_vexpand(False)
+            child.set_margin_top(0)
+            child.set_margin_bottom(0)
+            child.set_margin_start(0)
+            child.set_margin_end(0)
         self.flowbox.show_all()
         self.queue_visible_preview_update()
 
