@@ -1,10 +1,13 @@
 # Kwik Font
 
 Kwik Font is a GTK utility for browsing and managing fonts on the Linux desktop.
+
 ### Browse fonts
 <img width="1154" height="885" alt="Browse" src="https://github.com/user-attachments/assets/7847111c-b719-40c1-ad3f-84f2be0127f3" />
+
 ### Manage fonts
 <img width="1154" height="885" alt="Manage" src="https://github.com/user-attachments/assets/8c530f46-f19a-4f92-9937-51fe66c17953" />
+
 ### Create PDF specimens
 <img width="2479" height="3508" alt="font-catalog" src="https://github.com/user-attachments/assets/2a5fa63b-7e80-4b0c-b161-7529534ce31e" />
 
