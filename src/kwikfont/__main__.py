@@ -1,4 +1,4 @@
-"""Run Kwik Font with ``python -m fontmgr``."""
+"""Run Kwik Font with ``python -m kwikfont``."""
 
 from .app import main
 

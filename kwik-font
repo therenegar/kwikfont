@@ -1,6 +1,6 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
-cd ~/scripts/kwikfont/src
-python3 -m kwikfont.app
-
-exit 0
+script_dir="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+export PYTHONPATH="$script_dir/src${PYTHONPATH:+:$PYTHONPATH}"
+exec python3 -m kwikfont.app "$@"

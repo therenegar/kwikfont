@@ -23,9 +23,45 @@ sudo apt install python3-gi python3-gi-cairo gir1.2-gtk-3.0 gir1.2-gdkpixbuf-2.0
 ## Run from source
 
 ```bash
-cd src
-python -m kwikfont.app
+./kwik-font
 ```
+
+Alternatively, run the module directly:
+
+```bash
+PYTHONPATH=src python3 -m kwikfont.app
+```
+
+## Build a Debian package
+
+Kwik Font includes a lightweight package builder that creates an installable `.deb` with the application code, launcher, desktop entry, and Debian dependency metadata. The script only requires standard Debian packaging tools such as `dpkg-deb`; it does not require `debhelper`.
+
+1. Install build-time tooling:
+
+   ```bash
+   sudo apt update
+   sudo apt install dpkg-dev python3
+   ```
+
+2. Build the package from the repository root:
+
+   ```bash
+   ./scripts/build-deb.sh
+   ```
+
+3. Install the generated package:
+
+   ```bash
+   sudo apt install ./dist/kwik-font_0.1.0_all.deb
+   ```
+
+4. Start Kwik Font from your application launcher, or run:
+
+   ```bash
+   kwik-font
+   ```
+
+The package declares runtime dependencies on `python3`, GTK/PyGObject bindings, Cairo, FontTools, and Fontconfig. If you install the package with `apt`, missing dependencies are resolved automatically from your configured repositories. If you install with `dpkg -i`, run `sudo apt -f install` afterwards to resolve any missing dependencies.
 
 ## Notes
 
