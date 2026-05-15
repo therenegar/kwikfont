@@ -1,4 +1,4 @@
-"""Run enBox Font Manager with ``python -m fontmgr``."""
+"""Run Kwik Font with ``python -m fontmgr``."""
 
 from .app import main
 
