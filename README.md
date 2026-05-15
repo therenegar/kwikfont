@@ -1,22 +1,17 @@
 # Kwik Font
 
-Kwik Font is a standalone GTK utility for browsing, previewing, installing, uninstalling, grouping, and printing specimens for fonts on Linux. It is designed to be shipped with, or launched from, a directory of font files so the startup **Browse Fonts** tab immediately shows the fonts next to the executable.
+Kwik Font is a GTK utility for browsing and managing fonts on the Linux desktop.
+### Browse fonts
+<img width="1154" height="885" alt="Browse" src="https://github.com/user-attachments/assets/7847111c-b719-40c1-ad3f-84f2be0127f3" />
+### Manage fonts
+<img width="1154" height="885" alt="Manage" src="https://github.com/user-attachments/assets/8c530f46-f19a-4f92-9937-51fe66c17953" />
+### Create PDF specimens
+<img width="2479" height="3508" alt="font-catalog" src="https://github.com/user-attachments/assets/2a5fa63b-7e80-4b0c-b161-7529534ce31e" />
 
-## Features
-
-- GTK desktop application with File, Edit, View, and Help menus.
-- Toolbar actions for refresh, view, print listing, install, uninstall, and search.
-- **Browse Fonts** tab for inspecting fonts in the launch directory or any selected filesystem folder.
-- **My Fonts** tab for installed user fonts (`~/.fonts`), system fonts (`/usr/share/fonts`), and user-created font groups.
-- Toggle between font preview tiles and sortable file metadata listings.
-- Modal font viewer with font metadata, editable preview text, and size selector from 8 pt to 72 pt.
-- User font installation and uninstallation with best-effort `fc-cache` refresh.
-- Font groups backed by directories in `~/.fonts`.
-- PDF font catalog/specimen generation for selected fonts, with preview text drawn from font outlines.
 
 ## Requirements
 
-Install the native GTK/Python bindings supplied by your Linux distribution. On Debian or Ubuntu:
+On Debian, install pre-requisites
 
 ```bash
 sudo apt install python3-gi python3-gi-cairo gir1.2-gtk-3.0 gir1.2-gdkpixbuf-2.0 python3-cairo fontconfig
@@ -25,20 +20,8 @@ sudo apt install python3-gi python3-gi-cairo gir1.2-gtk-3.0 gir1.2-gdkpixbuf-2.0
 ## Run from source
 
 ```bash
+cd src
 python -m fontmgr.app
-```
-
-When using the packaged console script:
-
-```bash
-kwik-font
-```
-
-## Install from source
-
-```bash
-python -m pip install .
-kwik-font
 ```
 
 ## Notes
