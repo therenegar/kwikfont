@@ -1,8 +1,8 @@
 [Desktop Entry]
 Type=Application
-Name=enBox Font Manager
+Name=Kwik Font
 Comment=Browse, view, install, and print Linux fonts
-Exec=enbox-font-manager
+Exec=kwik-font
 Icon=preferences-desktop-font
 Terminal=false
 Categories=GTK;Graphics;Utility;

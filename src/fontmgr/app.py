@@ -1,4 +1,4 @@
-"""GTK font browser, installer, and catalog generator for Linux."""
+"""Kwik Font GTK font browser, installer, and catalog generator for Linux."""
 
 from __future__ import annotations
 
@@ -26,6 +26,8 @@ FONT_EXTENSIONS = {".ttf", ".otf", ".ttc", ".otc", ".woff", ".woff2", ".pfb", ".
 USER_FONT_DIR = Path.home() / ".fonts"
 SYSTEM_FONT_DIR = Path("/usr/share/fonts")
 SAMPLE_TEXT = "AaBbCcDdEeFfGgHhIiJjKkLlMmNnOoPpQqRrSsTtUuVvWwXxYyZz"
+APP_NAME = "Kwik Font"
+APP_ID = "com.kwikfont.KwikFont"
 
 
 @dataclass(frozen=True)
@@ -442,11 +444,12 @@ def create_wrapped_outline_pixbuf(record: FontRecord, text: str, width: int, hei
 
 
 class FontTile(Gtk.EventBox):
-    """Selectable compact preview tile for a font."""
+    """Selectable fixed-size preview tile for a font."""
 
-    WIDTH = 220
-    HEIGHT = 50
-    PREVIEW_WIDTH = 220
+    WIDTH = 240
+    HEIGHT = 96
+    PADDING = 8
+    PREVIEW_WIDTH = WIDTH - (PADDING * 2)
     PREVIEW_HEIGHT = 50
 
     def __init__(self, record: FontRecord, on_select, on_open):
@@ -457,19 +460,42 @@ class FontTile(Gtk.EventBox):
         self.on_open = on_open
         self.set_visible_window(True)
         self.set_size_request(self.WIDTH, self.HEIGHT)
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, margin=8)
+        self.set_halign(Gtk.Align.START)
+        self.set_valign(Gtk.Align.START)
+        self.set_hexpand(False)
+        self.set_vexpand(False)
+        self.style_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.style_box.set_size_request(self.WIDTH, self.HEIGHT)
+        self.style_box.get_style_context().add_class("font-tile")
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, margin=self.PADDING)
         name = Gtk.Label(label=record.name, xalign=0)
         name.set_halign(Gtk.Align.START)
         name.set_ellipsize(Pango.EllipsizeMode.END)
+        name.set_width_chars(1)
+        name.set_max_width_chars(1)
+        name.set_size_request(self.PREVIEW_WIDTH, -1)
         self.preview = Gtk.Image()
         self.preview.set_halign(Gtk.Align.START)
         self.preview.set_size_request(self.PREVIEW_WIDTH, self.PREVIEW_HEIGHT)
-        box.pack_start(name, False, False, 0)
-        box.pack_start(self.preview, False, False, 0)
-        self.add(box)
+        content.pack_start(name, False, False, 0)
+        content.pack_start(self.preview, False, False, 0)
+        self.style_box.pack_start(content, True, True, 0)
+        self.add(self.style_box)
         self.connect("button-press-event", self._clicked)
         self.preview_loaded = False
         self.update_style()
+
+    def do_get_preferred_width(self):
+        return self.WIDTH, self.WIDTH
+
+    def do_get_preferred_height(self):
+        return self.HEIGHT, self.HEIGHT
+
+    def do_get_preferred_width_for_height(self, _height):
+        return self.WIDTH, self.WIDTH
+
+    def do_get_preferred_height_for_width(self, _width):
+        return self.HEIGHT, self.HEIGHT
 
     def _clicked(self, _widget, event):
         if event.type == Gdk.EventType._2BUTTON_PRESS:
@@ -501,11 +527,11 @@ class FontTile(Gtk.EventBox):
 
     def update_style(self) -> None:
         css = (
-            "background: @theme_selected_bg_color; color: @theme_selected_fg_color; border: 2px solid #111111;"
+            "background-color: #111111; color: #ffffff; border: 2px solid #111111;"
             if self.selected
-            else "background: #ffffff; color: #111111; border: 1px solid #111111;"
+            else "background-color: #ffffff; color: #111111; border: 1px solid #111111;"
         )
-        apply_css(self, f"eventbox {{ {css} }} eventbox * {{ color: inherit; }}")
+        apply_css(self.style_box, f".font-tile {{ {css} margin: 0; }} .font-tile * {{ color: inherit; }}")
 
 
 class FontPane(Gtk.Box):
@@ -547,8 +573,11 @@ class FontPane(Gtk.Box):
         content.pack1(self.sidebar, resize=False, shrink=False)
         self.stack = Gtk.Stack()
         self.flowbox = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, min_children_per_line=1, max_children_per_line=100)
-        self.flowbox.set_homogeneous(True)
+        self.flowbox.set_homogeneous(False)
+        self.flowbox.set_column_spacing(0)
+        self.flowbox.set_row_spacing(0)
         self.flowbox.set_valign(Gtk.Align.START)
+        apply_css(self.flowbox, "flowbox { margin: 0; padding: 0; } flowboxchild { margin: 0; padding: 0; }")
         self.flow_scroll = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER, vscrollbar_policy=Gtk.PolicyType.AUTOMATIC)
         self.flow_scroll.add(self.flowbox)
         self.flow_scroll.connect("size-allocate", lambda *_args: self.queue_visible_preview_update())
@@ -565,6 +594,7 @@ class FontPane(Gtk.Box):
             self.file_view.append_column(column)
         self.file_view.get_selection().set_mode(Gtk.SelectionMode.MULTIPLE)
         self.file_view.get_selection().connect("changed", self._file_selection_changed)
+        self.file_view.connect("row-activated", self._file_row_activated)
         file_scroll = Gtk.ScrolledWindow(vscrollbar_policy=Gtk.PolicyType.ALWAYS)
         file_scroll.add(self.file_view)
         self.stack.add_named(self.flow_scroll, "fonts")
@@ -577,22 +607,25 @@ class FontPane(Gtk.Box):
             for label, cb in (
                 ("New Group", self.new_group),
                 ("Delete Group", self.delete_group),
-                ("Uninstall Font", lambda _b: self.app.uninstall_selected()),
                 ("Add Font to Group", lambda _b: self.app.add_selected_to_group()),
                 ("Remove from Group", lambda _b: self.app.remove_selected_from_group()),
             ):
                 button = Gtk.Button(label=label)
                 button.connect("clicked", cb)
-                if label == "Uninstall Font":
-                    self.app.uninstall_actions.append(button)
                 buttons.pack_start(button, False, False, 0)
+            buttons.pack_start(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL), False, False, 0)
+            uninstall_button = Gtk.Button(label="Uninstall Font")
+            uninstall_button.connect("clicked", lambda _button: self.app.uninstall_selected())
+            self.app.uninstall_actions.append(uninstall_button)
+            buttons.pack_start(uninstall_button, False, False, 0)
         else:
             self.recent_button = Gtk.MenuButton()
-            self.recent_button.set_label("Recent folders")
+            self.recent_button.set_label("Recent Folders")
             self.recent_menu = Gtk.Menu()
             self.recent_button.set_popup(self.recent_menu)
             self._refresh_recent_menu()
             buttons.pack_start(self.recent_button, False, False, 0)
+            buttons.pack_start(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL), False, False, 0)
             install_button = Gtk.Button(label="Install Font")
             install_button.connect("clicked", lambda _button: self.app.install_selected())
             self.app.install_actions.append(install_button)
@@ -814,6 +847,16 @@ class FontPane(Gtk.Box):
             self.flowbox.remove(child)
         for record in self.records:
             self.flowbox.add(FontTile(record, self._tile_selected, self.app.open_font_record))
+        for child in self.flowbox.get_children():
+            child.set_size_request(FontTile.WIDTH, FontTile.HEIGHT)
+            child.set_halign(Gtk.Align.START)
+            child.set_valign(Gtk.Align.START)
+            child.set_hexpand(False)
+            child.set_vexpand(False)
+            child.set_margin_top(0)
+            child.set_margin_bottom(0)
+            child.set_margin_start(0)
+            child.set_margin_end(0)
         self.flowbox.show_all()
         self.queue_visible_preview_update()
 
@@ -871,6 +914,11 @@ class FontPane(Gtk.Box):
         self.selected_records = [self.file_store[path][6] for path in paths]
         self.app.update_status_for_pane(self)
 
+    def _file_row_activated(self, _view: Gtk.TreeView, path: Gtk.TreePath, _column: Gtk.TreeViewColumn) -> None:
+        record = self.file_store[path][6]
+        self.selected_records = [record]
+        self.app.open_font_record(record)
+
     def select_all(self) -> None:
         self.selected_records = list(self.records)
         self.file_view.get_selection().select_all()
@@ -927,7 +975,7 @@ class FontManagerWindow(Gtk.ApplicationWindow):
     """Main application window."""
 
     def __init__(self, app: Gtk.Application):
-        super().__init__(application=app, title="enBox Font Manager")
+        super().__init__(application=app, title=APP_NAME)
         self.set_default_size(1100, 760)
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self.add(root)
@@ -1162,7 +1210,7 @@ class FontManagerWindow(Gtk.ApplicationWindow):
         dialog.destroy()
 
     def about(self, *_args) -> None:
-        dialog = Gtk.AboutDialog(transient_for=self, modal=True, program_name="enBox Font Manager", version="0.1.0", comments="Browse, view, install, uninstall, group, and print Linux fonts.")
+        dialog = Gtk.AboutDialog(transient_for=self, modal=True, program_name=APP_NAME, version="0.1.0", comments="Browse, view, install, uninstall, group, and print Linux fonts.")
         dialog.run()
         dialog.destroy()
 
@@ -1271,8 +1319,9 @@ def create_pdf_catalog(filename: Path, records: list[FontRecord]) -> None:
             surface.show_page()
             y = 36
         ctx.set_source_rgb(0, 0, 0)
-        ctx.move_to(32, y + 10)
-        ctx.line_to(width - 32, y + 10)
+        ctx.set_line_width(1)
+        ctx.move_to(32, y + 10.5)
+        ctx.line_to(width - 32, y + 10.5)
         ctx.stroke()
         layout.set_text(family, -1)
         layout.set_font_description(Pango.FontDescription("Helvetica 14"))
@@ -1291,7 +1340,7 @@ def create_pdf_catalog(filename: Path, records: list[FontRecord]) -> None:
             ctx.set_source_rgb(0, 0, 0)
             draw_outline_text(ctx, record, SAMPLE_TEXT, 32, y + 18, 18, max_width=width - 64)
             y += 24
-            draw_text(f"{record.style} ({record.path})", "Monospace 7", 32, y)
+            draw_text(f"{record.style} ({record.path.name})", "Monospace 7", 32, y)
             y += 18
         y += 16
     surface.finish()
@@ -1299,7 +1348,7 @@ def create_pdf_catalog(filename: Path, records: list[FontRecord]) -> None:
 
 class FontManagerApplication(Gtk.Application):
     def __init__(self):
-        super().__init__(application_id="com.enbox.FontManager", flags=Gio.ApplicationFlags.FLAGS_NONE)
+        super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.FLAGS_NONE)
 
     def do_activate(self):
         window = self.props.active_window or FontManagerWindow(self)

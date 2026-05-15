@@ -1,6 +1,6 @@
-# enBox Font Manager
+# Kwik Font
 
-enBox Font Manager is a standalone GTK utility for browsing, previewing, installing, uninstalling, grouping, and printing specimens for fonts on Linux. It is designed to be shipped with, or launched from, a directory of font files so the startup **Browse Fonts** tab immediately shows the fonts next to the executable.
+Kwik Font is a standalone GTK utility for browsing, previewing, installing, uninstalling, grouping, and printing specimens for fonts on Linux. It is designed to be shipped with, or launched from, a directory of font files so the startup **Browse Fonts** tab immediately shows the fonts next to the executable.
 
 ## Features
 
@@ -31,14 +31,14 @@ python -m fontmgr.app
 When using the packaged console script:
 
 ```bash
-enbox-font-manager
+kwik-font
 ```
 
 ## Install from source
 
 ```bash
 python -m pip install .
-enbox-font-manager
+kwik-font
 ```
 
 ## Notes
