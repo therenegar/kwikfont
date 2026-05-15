@@ -1215,7 +1215,7 @@ class FontManagerWindow(Gtk.ApplicationWindow):
         dialog.destroy()
 
     def about(self, *_args) -> None:
-        dialog = Gtk.AboutDialog(transient_for=self, modal=True, program_name=APP_NAME, version="0.1.0", comments="Browse, view, install, uninstall, group, and print Linux fonts.")
+        dialog = Gtk.AboutDialog(transient_for=self, modal=True, logo_icon_name="fonts", program_name=APP_NAME, version="0.1.0", comments="A quick and friendly GTK font manager for the Linux desktop.")
         dialog.run()
         dialog.destroy()
 
